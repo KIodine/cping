@@ -25,6 +25,12 @@
 #include <linux/filter.h>
 
 
+/*  PROPOSAL
+    - [ ] move helper function to other source file and not expose
+          their symbol.
+*/
+
+
 struct cping_ctx {
     int v4fd;
     int v6fd;

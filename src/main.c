@@ -17,7 +17,7 @@ int main(void){
         return EXIT_FAILURE;
     }
 
-    ret = cping_once(&cp, "localhost", AF_INET, 1000, &delay);
+    ret = cping_once(&cp, "127.0.0.1", AF_INET, 1000, &delay);
     if (ret == -1){
         fprintf(stderr, "can't ping v4"NL);
         exit_code = EXIT_FAILURE;

@@ -34,21 +34,6 @@ static int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq);
 static int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq);
 
 
-/*  TODO:
-    - ssize_t sendto_v4(
-        int fd, const void *buf, size_t len,
-        const struct sockaddr* saddr, socklen_t slen
-    );
-    - ssize_t sendto_v6(
-        int fd, const void *buf, size_t len,
-        const struct sockaddr *saddr, socklen_t slen
-    )
-    - handle_recvf_v4(...)
-    - handle_recvf_v6(...)
-*/
-
-
-
 /* --- static data ------------------------------------------ */
 
 /*
@@ -64,15 +49,12 @@ static int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq);
  *  but did not describe how it affects the filtering process.
  */
 
-/* Does filter works on both outgoing and incoming packages?? */
-/* Why it works if let `ICMP_ECHO` passes? */
 #define ARRAY_SZ(arr) (sizeof(arr)/sizeof((arr)[0]))
 static struct sock_filter code[] = {
     { 0xb1, 0, 0, 0x00000000 },
     { 0x50, 0, 0, 0x00000000 },
-    { 0x15, 4, 0, 0x00000000 },
-    { 0x15, 3, 0, 0x00000003 },
-    { 0x15, 2, 0, 0x00000008 },
+    { 0x15, 3, 0, 0x00000000 },
+    { 0x15, 2, 0, 0x00000003 },
     { 0x15, 1, 0, 0x0000000b },
     { 0x6, 0, 0, 0x00000000 },
     { 0x6, 0, 0, 0xffffffff },
@@ -165,23 +147,29 @@ int setup_icmp_er(
     uint16_t chksum   = 0;
 
     /*  FIXME
-        - incorrect checksum on IPv4?
-        - IPv6 calculates checksum in different way
+        - [X] incorrect checksum on IPv4?
+            -> no, it's just a silly misconception.
     */
 
     /* reset checksum */
     if (family == AF_INET){
-        icmp->icmp_code  = ICMP_ECHO;
+        icmp->icmp_type  = ICMP_ECHO;
     } else {   /* AF_INET6 */
-        icmp->icmp_code  = ICMP6_ECHO_REQUEST;
+        icmp->icmp_type  = ICMP6_ECHO_REQUEST;
     }
+    icmp->icmp_code  = 0;
     icmp->icmp_cksum = 0;
     icmp->icmp_id    = htons(id);
     icmp->icmp_seq   = htons(seq);
-    chksum = inet_checksum16(buf, len);
-    icmp->icmp_cksum = chksum;
-    
-    assert(inet_checksum16(buf, len) == 0);
+    if (family == AF_INET){
+        chksum = inet_checksum16(buf, len);
+        icmp->icmp_cksum = chksum;
+        
+        assert(inet_checksum16(buf, len) == 0);
+    } else {
+        /* IPv6 stack will calculate this */
+        icmp->icmp_cksum = 0;
+    }
     debug_printf("setup checksum = %X"NL, chksum);
 
     return 0;
@@ -196,7 +184,7 @@ static
 int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     struct icmp *icmp = NULL;
     char *bytes  = NULL;
-    int   code   = -1;
+    int   type   = -1;
     int   hdrlen = 0;
     uint16_t packet_id, packet_seq;
 
@@ -205,21 +193,21 @@ int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     bytes += hdrlen; /* skip header */
 
     icmp = (struct icmp*)bytes;
-    code = icmp->icmp_code;
+    type = icmp->icmp_code;
 
     debug_printf("v4 received chksum = %X"NL, icmp->icmp_cksum);
     assert(inet_checksum16(bytes, len - hdrlen) == 0);
 
-    if (code == ICMP_ECHOREPLY){
+    if (type == ICMP_ECHOREPLY){
         /* no need to move the pointer */;
-    } else if (code == ICMP_DEST_UNREACH || code == ICMP_TIME_EXCEEDED){
+    } else if (type == ICMP_DEST_UNREACH || type == ICMP_TIME_EXCEEDED){
         /* skip icmp header and IPv4 header */
         bytes += 8UL;
         bytes += 4UL*(bytes[0] & 0xF);
         icmp = (struct icmp*)bytes;
     } else {
-        debug_printf("not handling code4: %d"NL, code);
-        code = -1;
+        debug_printf("not handling code4: %d"NL, type);
+        type = -1;
         goto no_handle;
     }
 
@@ -227,45 +215,45 @@ int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     packet_seq = ntohs(icmp->icmp_seq);
 
     debug_printf(
-        "v4 verified: code=%3d, id=%3d, seq=%3d"NL,
-        code, packet_id, packet_seq
+        "v4 verified: type=%3d, id=%3d, seq=%3d"NL,
+        type, packet_id, packet_seq
     );
     
     if (packet_id != id || packet_seq != seq){
         /* it's not for us */
         debug_printf("v4 received others"NL);
-        code = -1;
+        type = -1;
     }
 no_handle:
-    return code;
+    return type;
 }
 
 static
 int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     struct icmp6_hdr *icmp6 = NULL;
     char *bytes = NULL;
-    int   code6 = -1;
+    int   type6 = -1;
     uint16_t packet_id, packet_seq;
 
     /* no need to skip IPv6 hdr cause we won't receive it */
     bytes = buf;
 
     icmp6 = (struct icmp6_hdr*)bytes;
-    code6 = icmp6->icmp6_code;
+    type6 = icmp6->icmp6_type;
 
     debug_printf("v6 received checksum = %X"NL, icmp6->icmp6_cksum);
-    assert(inet_checksum16(bytes, len) == 0);
+    //assert(inet_checksum16(bytes, len) == 0);
 
-    if (code6 == ICMP6_ECHO_REPLY){
+    if (type6 == ICMP6_ECHO_REPLY){
         /* do nothing */;
-    } else if (code6 == ICMP6_DST_UNREACH || code6 == ICMP6_TIME_EXCEEDED){
+    } else if (type6 == ICMP6_DST_UNREACH || type6 == ICMP6_TIME_EXCEEDED){
         /* skip icmp6 header and IPv6 header */
         bytes += 8UL;
         bytes += 40UL;
         icmp6 = (struct icmp6_hdr*)bytes;
     } else {
-        debug_printf("not handling code6: %d"NL, code6);
-        code6 = -1;
+        debug_printf("not handling type6: %d"NL, type6);
+        type6 = -1;
         goto no_handle;
     }
     
@@ -273,15 +261,15 @@ int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     packet_seq = ntohs(icmp6->icmp6_seq);
 
     debug_printf(
-        "verified: code=%3d, id=%3d, seq=%3d"NL,
-        code6, packet_id, packet_seq
+        "verified: type=%3d, id=%3d, seq=%3d"NL,
+        type6, packet_id, packet_seq
     );
 
     if (packet_id != id || packet_seq != seq){
-        code6 = -1;
+        type6 = -1;
     }
 no_handle:
-    return code6;
+    return type6;
 }
 
 static int create_v4raw(void){
@@ -301,14 +289,14 @@ static int create_v4raw(void){
     }
 
     /* the filter works fine */
-    /*
+    
     res = setsockopt(tmpfd, SOL_SOCKET, SO_ATTACH_FILTER,
                      &bpf, sizeof(struct sock_fprog));
     if (res == -1){
         perror("attach bpf code on v4 raw");
         goto bpf_attach_fail;
     }
-    */
+    
     return tmpfd;
     /* error handling area */
 bpf_attach_fail:
@@ -337,10 +325,9 @@ static int create_v6raw(void){
     }
 
     /* this works fine, it is the packet malformed */
-    /*
     //ICMP6_FILTER_SETBLOCKALL(&v6filter);
     ICMP6_FILTER_SETBLOCKALL(&v6filter);
-    ICMP6_FILTER_SETPASS(ICMP6_ECHO_REQUEST,  &v6filter);
+    //ICMP6_FILTER_SETPASS(ICMP6_ECHO_REQUEST,  &v6filter);
     ICMP6_FILTER_SETPASS(ICMP6_ECHO_REPLY,    &v6filter);
     ICMP6_FILTER_SETPASS(ICMP6_TIME_EXCEEDED, &v6filter);
     ICMP6_FILTER_SETPASS(ICMP6_DST_UNREACH,   &v6filter);
@@ -351,7 +338,6 @@ static int create_v6raw(void){
         perror("v6 raw set filter");
         goto set_filter_error;
     }
-    */
 
     return tmpfd;
     /* error handling area */
@@ -432,7 +418,7 @@ int cping_once(
     
     /*  TODO
         - [X] just write naive code first
-        - [ ] verify `inet_checksum16`
+        - [X] verify `inet_checksum16`
         - [ ] clean scattering local variable declaration
         - [ ] add proper error handling
 
@@ -457,8 +443,7 @@ int cping_once(
     snd_id = random() & 0xFFFF;
 
     debug_printf(
-        "generate id=%3d, seq=%3d"NL,
-        snd_id, snd_seq
+        "generate id=%3d, seq=%3d"NL, snd_id, snd_seq
     );
 
     hint.ai_socktype = SOCK_RAW;

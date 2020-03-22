@@ -2,7 +2,6 @@
     ldb [x + 0]
     jeq #0x0, pass
     jeq #0x3, pass
-    jeq #0x8, pass
     jeq #0xb, pass
     ret #0
 pass:
