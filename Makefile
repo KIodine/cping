@@ -10,7 +10,10 @@ LIBDIR := ./lib
 OBJDIR := ./obj
 BINDIR := ./bin
 
-OBJS := cping.o
+# beware of the order of obj files, `ld` handles each obj file with
+# the order these file inputs and will not look back for "unsatisfied"
+# symbols.
+OBJS := cping.o cpaux.o
 TEST := main.o
 
 BIN := main
