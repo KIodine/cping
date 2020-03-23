@@ -1,12 +1,6 @@
 #include "cping.h"
 
 
-#ifdef __GNUC__
-    #define ThreadLocal __thread
-#else
-    #error "No corresponding ThreadLocal specifier set"
-#endif
-
 #define NL "\n"
 #define PREFIX "[cping]"
 
@@ -26,7 +20,8 @@ static int create_v4raw(void);
 static int create_v6raw(void);
 /* make ICMP echo request pack */
 static ssize_t init_icmp_pack(void *buf, size_t len);
-static size_t icmp_stuffing(unsigned char *buf, size_t len);
+/* stuffing the rest of icmp packet with alphabet */
+static inline size_t icmp_stuffing(unsigned char *buf, size_t len);
 static uint16_t inet_checksum16(char *buf, unsigned int len);
 static int setup_icmp_er(int family, void *buf, size_t len, uint16_t id, uint16_t seq);
 
@@ -61,7 +56,7 @@ static struct sock_filter code[] = {
 };
 
 static const struct sock_fprog bpf = {
-    .len = ARRAY_SZ(code),
+    .len    = ARRAY_SZ(code),
     .filter = code,
 };
 
@@ -99,11 +94,10 @@ ssize_t init_icmp_pack(void *buf, size_t len){
     return 0;
 }
 
-static
+static inline
 size_t icmp_stuffing(unsigned char *buf, size_t len){
     size_t i = 0;
     int base = 97; /* ord(a) = 97 */
-    /* stuffing lowercase alphabets in buffer */
     for (;i < len; ++i){
         buf[i] = base + (i % 26);
     }
@@ -118,15 +112,11 @@ uint16_t inet_checksum16(char* buf, unsigned int len){
 
     u16arr = (uint16_t*)buf;
     u16len = len >> 1;
-    
-    for (unsigned int i = 0; i < u16len; ++i){
-        u32buf += u16arr[i];
-    }
-/*
+
     for (;u16len--;){
         u32buf += u16arr[u16len];
     }
-*/
+
     if (len & 0x1){
         /* have odd bytes */
         u32buf += (uint32_t)(((uint8_t*)buf)[len - 1]);
@@ -146,12 +136,6 @@ int setup_icmp_er(
     struct icmp *icmp = buf;
     uint16_t chksum   = 0;
 
-    /*  FIXME
-        - [X] incorrect checksum on IPv4?
-            -> no, it's just a silly misconception.
-    */
-
-    /* reset checksum */
     if (family == AF_INET){
         icmp->icmp_type  = ICMP_ECHO;
     } else {   /* AF_INET6 */
@@ -187,6 +171,12 @@ int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     int   type   = -1;
     int   hdrlen = 0;
     uint16_t packet_id, packet_seq;
+    const unsigned int min_v4_icmp_sz = 20UL + 8UL;
+
+    if (len < min_v4_icmp_sz){
+        fprintf(stderr, "received packet stream short than v4 minimum length of 28: %lu", len);
+        abort();
+    }
 
     bytes  = buf;
     hdrlen = 4*(bytes[0] & 0xF);
@@ -234,6 +224,13 @@ int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     char *bytes = NULL;
     int   type6 = -1;
     uint16_t packet_id, packet_seq;
+    const unsigned int min_v6_icmp_sz = 8UL;
+    /* TODO: add min size req test */
+
+    if (len < min_v6_icmp_sz){
+        fprintf(stderr, "received packet stream short than v6 minimum length of 8: %lu", len);
+        abort();
+    }
 
     /* no need to skip IPv6 hdr cause we won't receive it */
     bytes = buf;
@@ -399,6 +396,9 @@ v4sock_error:
 }
 
 void cping_fini(struct cping_ctx *cpctx){
+    if (cpctx == NULL){
+        return;
+    }
     close(cpctx->v4fd);
     close(cpctx->v6fd);
     close(cpctx->epfd);
@@ -413,21 +413,18 @@ int cping_once(
         const int timeout, struct timespec *delay
 ){
     struct addrinfo hint, *gai_res, *gai_tmp;
-    int gai_ret = 0, ret = 0, snd_fd;
+    struct timespec t0, dt, t_st, t_rem;
+    int wait_timeout = timeout;
+    int ret = 0, snd_fd;
+    int fd = -1, icmp_code = 0;
+    int nrcv;
     uint16_t snd_id, snd_seq = 0;
-    
-    /*  TODO
-        - [X] just write naive code first
-        - [X] verify `inet_checksum16`
-        - [ ] clean scattering local variable declaration
-        - [ ] add proper error handling
 
-        QUESTION:
-        - exposing error or just die?
-            1) if we can handle, handle it
-            2) if it is cause by user, return and prompt user
-            3) if it is cause by us but we can't handle, die
-    */
+    struct sockaddr_storage saddr_store;
+    struct epoll_event ep_event = {0};
+    socklen_t sastlen;
+    char present[INET6_ADDRSTRLEN] = {0};
+
 
     hint.ai_family   = family;
     if (family == AF_INET){
@@ -450,11 +447,11 @@ int cping_once(
     /* return only if local has ability to send */
     hint.ai_flags    = AI_ADDRCONFIG;
     
-    /* get from cache mechanism of directly from `getaddrinfo` */
+    /* get from cache mechanism or directly from `getaddrinfo` */
     /* service is irrelevent */
-    gai_ret = getaddrinfo(host, NULL, &hint, &gai_res);
-    if (gai_ret != 0){
-        fprintf(stderr, "getaddrinfo: %s"NL, gai_strerror(gai_ret));
+    ret = getaddrinfo(host, NULL, &hint, &gai_res);
+    if (ret != 0){
+        fprintf(stderr, "getaddrinfo: %s"NL, gai_strerror(ret));
         return -1;
     }
 
@@ -477,12 +474,10 @@ int cping_once(
             snd_fd, cpctx->icmp_pack, cpctx->paclen, 0,
             gai_tmp->ai_addr, gai_tmp->ai_addrlen
         );
+        debug_printf("`sendto` send = %d"NL, ret);
         if (ret > 0){
-            /* expecting 64 actually */
-            debug_printf("`sendto` send = %d"NL, ret);
+            /* expecting 40 actually */
             break;
-        } else {
-            debug_printf("`sendto` ret = %d"NL, ret);
         }
     }
     if (gai_tmp != NULL){
@@ -496,18 +491,8 @@ int cping_once(
     }
     freeaddrinfo(gai_res);
 
-
-    struct timespec t0, dt, t_st, t_rem;
-    int wait_timeout = timeout;
     
     ret = clock_gettime(CLOCK_MONOTONIC, &t0);
-
-    struct sockaddr_storage saddr_store;
-    struct epoll_event ep_event = {0};
-    socklen_t sastlen;
-    int fd = -1, icmp_code = 0;
-
-    /* TODO: generalize the `cpctx->v4fd` below this comment */
 
     ep_event.events = EPOLLET|EPOLLIN;
     ep_event.data.fd = snd_fd;
@@ -541,9 +526,6 @@ int cping_once(
         /* receive from fd and check is right icmp packet */
         fd = ep_event.data.fd;
         assert(fd == snd_fd);
-        
-        int nrcv;
-        char present[256] = {0};
 
         for (;;){
             nrcv = recvfrom(
@@ -561,7 +543,7 @@ int cping_once(
                 } else {
                     /* other error, need to dereg fd anyway */
                     perror("receiving datagram");
-                    inet_ntop(family, &saddr_store, present, 256);
+                    inet_ntop(family, &saddr_store, present, INET6_ADDRSTRLEN);
                     debug_printf(
                         "nrcv = %d, errno = %d, addr = %s"NL,
                         nrcv, errno, present
@@ -594,7 +576,7 @@ int cping_once(
         t_rem.tv_sec  = t_rem.tv_sec  - t_st.tv_sec;
         t_rem.tv_nsec = t_rem.tv_nsec - t_st.tv_nsec;
         /*
-            assert that `t_rem` is always greater equal than `t_st`
+            assume that `t_rem` is always greater equal than `t_st`
             and not too big from `wait_timeout`
         */
         wait_timeout -= timespec2ms(&t_rem);
