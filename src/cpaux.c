@@ -149,6 +149,13 @@ int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
         /* no need to move the pointer */;
     } else if (type == ICMP_DEST_UNREACH || type == ICMP_TIME_EXCEEDED){
         /* skip icmp header and IPv4 header */
+        if (len < (20UL*2 + 8UL*2)){
+            fprintf(stderr,
+                "packet shorter than minimum requirement of DST_UNREACH and "
+                "TIME_EXCEED (56): %lu"NL, len
+            );
+            abort();
+        }
         bytes += 8UL;
         bytes += 4UL*(bytes[0] & 0xF);
         icmp = (struct icmp*)bytes;
@@ -200,6 +207,13 @@ int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
         /* do nothing */;
     } else if (type6 == ICMP6_DST_UNREACH || type6 == ICMP6_TIME_EXCEEDED){
         /* skip icmp6 header and IPv6 header */
+        if (len < (min_v6_icmp_sz + 48UL)){
+            fprintf(stderr,
+                "received packet stream short than v6 minimum length of "
+                "error msg = 56 : %lu"NL, len
+            );
+            abort();
+        }
         bytes += 8UL;
         bytes += 40UL;
         icmp6 = (struct icmp6_hdr*)bytes;

@@ -30,6 +30,9 @@
     helper functions.
     putting the includes here would avoid symbols from polluting
     autocompletion, also make the library header much cleaner.
+
+    note that source files including this header must be put into `ld`
+    prior than other compilation units
 */
 
 
@@ -41,6 +44,10 @@
 #else
     #define debug_printf(ignore, ...) ((void)0)
 #endif
+
+
+#define ICMP_HDR_SZ 8UL
+#define ETH_MTU     1500UL
 
 
 /* create and setup IPv4 raw socket */

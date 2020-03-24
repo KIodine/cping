@@ -41,12 +41,12 @@ int cping_init(struct cping_ctx *cpctx){
     cpctx->epfd = tmpfd;
 
     /* `malloc` on linux always returns "valid" pointer */
-    cpctx->paclen = 8UL + 32UL; /* icmp header + payload */
+    cpctx->paclen = ICMP_HDR_SZ + 32UL; /* icmp header + payload */
     cpctx->icmp_pack = malloc(cpctx->paclen);
-    memset(cpctx->icmp_pack, 0, 40);
+    memset(cpctx->icmp_pack, 0, cpctx->paclen);
     init_icmp_pack(cpctx->icmp_pack, cpctx->paclen);
 
-    cpctx->buflen = 1500; /* MTU of ethernet */
+    cpctx->buflen = ETH_MTU;
     cpctx->rcv_buf = malloc(cpctx->buflen);
     memset(cpctx->rcv_buf, 0, cpctx->buflen);
 
@@ -88,8 +88,10 @@ int cping_once(
     uint16_t snd_id, snd_seq = 0;
 
     struct sockaddr_storage saddr_store;
+    struct sockaddr_in  *addr4;
+    struct sockaddr_in6 *addr6;
     struct epoll_event ep_event = {0};
-    socklen_t sastlen;
+    socklen_t sastlen = sizeof(struct sockaddr_storage);
     char present[INET6_ADDRSTRLEN] = {0};
 
 
@@ -143,6 +145,18 @@ int cping_once(
         );
         debug_printf("`sendto` send = %d"NL, ret);
         if (ret > 0){
+#ifndef NDEBUG
+            memset(present, 0, INET6_ADDRSTRLEN);
+            if (gai_tmp->ai_family == AF_INET){
+                addr4 = (struct sockaddr_in *)gai_tmp->ai_addr;
+                inet_ntop(gai_tmp->ai_family, &addr4->sin_addr, present, INET6_ADDRSTRLEN);
+            } else {
+                addr6 = (struct sockaddr_in6 *)gai_tmp->ai_addr;
+                inet_ntop(gai_tmp->ai_family, &addr6->sin6_addr, present, INET6_ADDRSTRLEN);
+            }
+
+            debug_printf("send packet to %s"NL, present);
+#endif
             /* expecting 40 actually */
             break;
         }
@@ -190,7 +204,7 @@ int cping_once(
             icmp_code = -1;
             break;
         }
-        /* receive from fd and check is right icmp packet */
+        
         fd = ep_event.data.fd;
         assert(fd == snd_fd);
 
@@ -199,10 +213,23 @@ int cping_once(
                 fd, cpctx->rcv_buf, cpctx->buflen, 0,
                 (struct sockaddr*)&saddr_store, &sastlen
             );
+#ifndef NDEBUG
+            memset(present, 0, INET6_ADDRSTRLEN);
+            debug_printf("`sastlen` = %u"NL, sastlen);
+            if (family== AF_INET){
+                addr4 = (struct sockaddr_in *)&saddr_store;
+                inet_ntop(AF_INET, &addr4->sin_addr, present, INET6_ADDRSTRLEN);
+            } else {
+                addr6 = (struct sockaddr_in6 *)&saddr_store;
+                inet_ntop(AF_INET6, &addr6->sin6_addr, present, INET6_ADDRSTRLEN);
+            }
+#endif
+            debug_printf("recv packet from %s"NL, present);
+            
             debug_printf("nrcv = %d"NL, nrcv);
             /* measure packet delay */
             ret = clock_gettime(CLOCK_MONOTONIC, &dt);
-            
+
             if (nrcv <= 0){
                 if (errno == EAGAIN){
                     /* all data have been read */
@@ -210,7 +237,6 @@ int cping_once(
                 } else {
                     /* other error, need to dereg fd anyway */
                     perror("receiving datagram");
-                    inet_ntop(family, &saddr_store, present, INET6_ADDRSTRLEN);
                     debug_printf(
                         "nrcv = %d, errno = %d, addr = %s"NL,
                         nrcv, errno, present
@@ -260,7 +286,7 @@ eploop_break:
         perror("remove fd from epoll fd");
         return -1;
     }
-    /* calculate delay */
+    
     delay->tv_sec  = dt.tv_sec  - t0.tv_sec;
     delay->tv_nsec = dt.tv_nsec - t0.tv_nsec;
 
