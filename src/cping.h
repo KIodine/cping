@@ -14,6 +14,7 @@
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp6.h>
 
+#include "cpcache.h"
 
 /*  PROPOSAL
     - [ ] move helper function to other source file and not expose
@@ -30,6 +31,7 @@ struct cping_ctx {
     size_t paclen;
     size_t buflen;
     /* some cache data structure like hashtable/tree */
+    struct addrif_cache *cache;
 };
 
 

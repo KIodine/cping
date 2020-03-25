@@ -1,6 +1,6 @@
 #include "cping.h"
 #include "cpaux.h"
-
+#include "cpcache.h"
 
 /* --- static function declarations ------------------------- */
 
@@ -51,6 +51,9 @@ int cping_init(struct cping_ctx *cpctx){
     memset(cpctx->rcv_buf, 0, cpctx->buflen);
 
     /* >>> init cache if implemented <<< */
+    struct timespec tmp_to = {0};
+    tmp_to.tv_sec = 300;
+    cpctx->cache = cpcache_alloc(&tmp_to);
 
     return 0;
     /* error handling area */
@@ -71,7 +74,10 @@ void cping_fini(struct cping_ctx *cpctx){
     close(cpctx->epfd);
     free(cpctx->icmp_pack);
     free(cpctx->rcv_buf);
+    
     /* release cache if implemented */
+    cpcache_free(cpctx->cache);
+
     return;
 }
 
@@ -116,11 +122,13 @@ int cping_once(
     /* return only if local has ability to send */
     hint.ai_flags    = AI_ADDRCONFIG;
     
-    /* get from cache mechanism or directly from `getaddrinfo` */
-    /* service is irrelevent */
-    ret = getaddrinfo(host, NULL, &hint, &gai_res);
+    /*
+        get addrinfo from cache. the cache calls getaddrinfo if requested
+        host is not found.
+    */
+    ret = cpcache_getaddrinfo(cpctx->cache, host, &hint, &gai_res);
     if (ret != 0){
-        fprintf(stderr, "getaddrinfo: %s"NL, gai_strerror(ret));
+        fprintf(stderr, "`cpcache_getaddrinfo`: %s"NL, gai_strerror(ret));
         return -1;
     }
 
@@ -165,13 +173,10 @@ int cping_once(
         /* cache only the valid address or the whole addrinfo chain? */
     } else {
         fprintf(
-            stderr, "can't find valid address for host: %s with family", host
+            stderr, "can't find usable address for host: %s with family", host
         );
-        freeaddrinfo(gai_res);
         return -1;
     }
-    freeaddrinfo(gai_res);
-
     
     ret = clock_gettime(CLOCK_MONOTONIC, &t0);
 
