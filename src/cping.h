@@ -16,11 +16,6 @@
 
 #include "cpcache.h"
 
-/*  PROPOSAL
-    - [ ] move helper function to other source file and not expose
-          their symbol.
-*/
-
 
 struct cping_ctx {
     int v4fd;
@@ -30,7 +25,6 @@ struct cping_ctx {
     void *rcv_buf;
     size_t paclen;
     size_t buflen;
-    /* some cache data structure like hashtable/tree */
     struct addrif_cache *cache;
 };
 
@@ -39,17 +33,30 @@ int  cping_init(struct cping_ctx *cpctx);
 void cping_fini(struct cping_ctx *cpctx);
 
 /*
-    return val:
-    - val >= 0
-        icmp code
-    - val < 0
-        error
+    Send ICMP echo request to host. If return value is greater/equal than
+    0, it is the ICMP type we received, otherwise (< 0) indicates error.
+    Note that the underlying sockets are setup only ICMP echo reply,
+    time exceeded and destination unreachable are allowed to pass.
 */
-int  cping_once(struct cping_ctx *cpctx, const char *host, int ver,
-                const int timeout, struct timespec *delay);
+int cping_once(
+    struct cping_ctx *cpctx, const char *host, int ver, const int timeout,
+    struct timespec *delay
+);
 
-int  cping_tracert(struct cping_ctx *cpctx, const char *host, int ver,
-                   const int timeout, const int maxhop);
+int cping_tracert(
+    struct cping_ctx *cpctx, const char *host, int ver, const int timeout,
+    const int maxhop
+);
+
+/* lower level APIs */
+
+/* Send ICMP echo request using addr. This routine is the underlying
+   function of `cping_once`. */
+int cping_addr_once(
+    struct cping_ctx *cpctx, struct sockaddr *addr, socklen_t addrlen,
+    const int timeout, struct timespec *delay
+);
+
 /* ---------------------------------------------------- */
 
 /*  PROPOSAL:

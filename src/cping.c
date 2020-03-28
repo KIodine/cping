@@ -85,131 +85,92 @@ int cping_once(
         struct cping_ctx *cpctx, const char *host, int family,
         const int timeout, struct timespec *delay
 ){
-    struct addrinfo hint, *gai_res, *gai_tmp;
-    struct timespec t0, dt, t_st, t_rem;
-    int wait_timeout = timeout;
-    int ret = 0, snd_fd;
-    int fd = -1, icmp_code = 0;
-    int nrcv;
-    uint16_t snd_id, snd_seq = 0;
-
-    struct sockaddr_storage saddr_store;
-    struct sockaddr_in  *addr4;
-    struct sockaddr_in6 *addr6;
-    struct epoll_event ep_event = {0};
-    socklen_t sastlen = sizeof(struct sockaddr_storage);
-    char present[INET6_ADDRSTRLEN] = {0};
+    struct addrinfo *gai_res;
+    int ret = 0, icmp_code = 0;
 
 
-    hint.ai_family   = family;
-    if (family == AF_INET){
-        hint.ai_protocol = IPPROTO_ICMP;
-    } else if (family == AF_INET6){
-        hint.ai_protocol = IPPROTO_ICMPV6;
-    } else {
+    if (family != AF_INET && family != AF_INET6){
         fprintf(stderr, "unexpected family %d"NL, family);
         abort();
     }
 
-    /* this is what we use to identify the packet */
-    snd_id = random() & 0xFFFF;
-
-    debug_printf(
-        "generate id=%3d, seq=%3d"NL, snd_id, snd_seq
-    );
-
-    hint.ai_socktype = SOCK_RAW;
-    /* return only if local has ability to send */
-    hint.ai_flags    = AI_ADDRCONFIG;
-    
-    /*
-        get addrinfo from cache. the cache calls getaddrinfo if requested
-        host is not found.
-    */
-    ret = cpcache_getaddrinfo(cpctx->cache, host, &hint, &gai_res);
+    /* get addrinfo from cache. the cache calls getaddrinfo if requested
+        host is not found. */
+    ret = cpcache_getaddrinfo(cpctx->cache, host, family, &gai_res);
     if (ret != 0){
         fprintf(stderr, "`cpcache_getaddrinfo`: %s"NL, gai_strerror(ret));
         return -1;
     }
+    
+    icmp_code = cping_addr_once(
+        cpctx, gai_res->ai_addr, gai_res->ai_addrlen, timeout, delay
+    );
 
-    /* afterward, we can assert `family should be `AF_INET` or `AF_INET6` */
-    if (family == AF_INET){
-        debug_printf("send use v4fd"NL);
-        snd_fd = cpctx->v4fd;
-    } else{
-        debug_printf("send use v6fd"NL);
-        snd_fd = cpctx->v6fd;
+    return icmp_code;
+}
+
+int cping_addr_once(
+    struct cping_ctx *cpctx, struct sockaddr *addr, socklen_t addrlen,
+    const int timeout, struct timespec *delay
+){
+    struct timespec t_snd, t_rcv, t_start_wait, t_end_wait;
+    struct sockaddr_storage saddr_store;
+    struct epoll_event ep_event = {0};
+    socklen_t sastlen = sizeof(struct sockaddr_storage);
+    int wait_timeout = timeout;
+    int ret, snd_fd, fd, nrcv, family, icmp_code = 0;
+    uint16_t snd_id, snd_seq;
+
+    family = addr->sa_family;
+
+    snd_id  = random() & 0xFFFF;
+    snd_seq = 0;
+
+    switch(family){
+    case AF_INET:
+        snd_fd = cpctx->v4fd; break;
+    case AF_INET6:
+        snd_fd = cpctx->v6fd; break;
+    default:
+        fprintf(stderr, "unexpected family %d"NL, family);
+        abort();
     }
 
     setup_icmp_er(
-        family, cpctx->icmp_pack, cpctx->paclen, snd_id, snd_seq
+        addr->sa_family, cpctx->icmp_pack, cpctx->paclen, snd_id, snd_seq
     );
-    /* try until a valid address is found */
-    for (gai_tmp = gai_res; gai_tmp != NULL; gai_tmp = gai_tmp->ai_next){
-        /* address should have identical family as `snd_fd` */
-        ret = sendto(
-            snd_fd, cpctx->icmp_pack, cpctx->paclen, 0,
-            gai_tmp->ai_addr, gai_tmp->ai_addrlen
-        );
-        debug_printf("`sendto` send = %d"NL, ret);
-        if (ret > 0){
-#ifndef NDEBUG
-            memset(present, 0, INET6_ADDRSTRLEN);
-            if (gai_tmp->ai_family == AF_INET){
-                addr4 = (struct sockaddr_in *)gai_tmp->ai_addr;
-                inet_ntop(gai_tmp->ai_family, &addr4->sin_addr, present, INET6_ADDRSTRLEN);
-            } else {
-                addr6 = (struct sockaddr_in6 *)gai_tmp->ai_addr;
-                inet_ntop(gai_tmp->ai_family, &addr6->sin6_addr, present, INET6_ADDRSTRLEN);
-            }
-
-            debug_printf("send packet to %s"NL, present);
-#endif
-            /* expecting 40 actually */
-            break;
-        }
+    ret = sendto(
+        snd_fd, cpctx->icmp_pack, cpctx->paclen, 0,
+        addr, addrlen
+    );
+    if (ret == -1){
+        perror("send icmp pack");
+        return 0;
     }
-    if (gai_tmp != NULL){
-        /* cache only the valid address or the whole addrinfo chain? */
-    } else {
-        fprintf(
-            stderr, "can't find usable address for host: %s with family", host
-        );
-        return -1;
-    }
-    
-    ret = clock_gettime(CLOCK_MONOTONIC, &t0);
+    clock_gettime(CLOCK_MONOTONIC, &t_snd);
 
-    ep_event.events = EPOLLET|EPOLLIN;
+    ep_event.events = EPOLLIN|EPOLLET;
     ep_event.data.fd = snd_fd;
-
-    debug_printf("register fd = %d"NL, snd_fd);
+    
     ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_ADD, snd_fd, &ep_event);
     if (ret != 0){
         perror("register fd into epoll");
         return -1;
     }
-    /*
-        wait until:
-        - [X] timeout occurs
-        - [X] received expected packet
-        reduce `wait_timeout` after every not successful retrive.
-    */
+
     for (;;){
-        clock_gettime(CLOCK_MONOTONIC, &t_st);
+        clock_gettime(CLOCK_MONOTONIC, &t_start_wait);
         ret = epoll_wait(cpctx->epfd, &ep_event, 1, wait_timeout);
-        clock_gettime(CLOCK_MONOTONIC, &t_rem);
+        clock_gettime(CLOCK_MONOTONIC, &t_end_wait);
         if (ret < 0){
             perror("waiting for fd ready");
-            return -1;
+            goto epoll_dereg_fd;
         }
         if (ret == 0){
-            /* timeout */
-            debug_printf("recv timeouts"NL);
+            /* No fd is ready, indicating timeout. */
             icmp_code = -1;
-            break;
+            goto epoll_dereg_fd;
         }
-        
         fd = ep_event.data.fd;
         assert(fd == snd_fd);
 
@@ -218,82 +179,53 @@ int cping_once(
                 fd, cpctx->rcv_buf, cpctx->buflen, 0,
                 (struct sockaddr*)&saddr_store, &sastlen
             );
-#ifndef NDEBUG
-            memset(present, 0, INET6_ADDRSTRLEN);
-            debug_printf("`sastlen` = %u"NL, sastlen);
-            if (family== AF_INET){
-                addr4 = (struct sockaddr_in *)&saddr_store;
-                inet_ntop(AF_INET, &addr4->sin_addr, present, INET6_ADDRSTRLEN);
-            } else {
-                addr6 = (struct sockaddr_in6 *)&saddr_store;
-                inet_ntop(AF_INET6, &addr6->sin6_addr, present, INET6_ADDRSTRLEN);
-            }
-#endif
-            debug_printf("recv packet from %s"NL, present);
-            
-            debug_printf("nrcv = %d"NL, nrcv);
-            /* measure packet delay */
-            ret = clock_gettime(CLOCK_MONOTONIC, &dt);
-
-            if (nrcv <= 0){
+            clock_gettime(CLOCK_MONOTONIC, &t_rcv);
+            if (nrcv == -1){
                 if (errno == EAGAIN){
-                    /* all data have been read */
                     break;
                 } else {
-                    /* other error, need to dereg fd anyway */
-                    perror("receiving datagram");
-                    debug_printf(
-                        "nrcv = %d, errno = %d, addr = %s"NL,
-                        nrcv, errno, present
-                    );
+                    perror("receiving packet");
                     icmp_code = -1;
-                    goto eploop_break;
+                    goto epoll_dereg_fd;
                 }
             }
-            
             if (fd == cpctx->v4fd){
-                debug_printf("verifying v4 packet"NL);
                 icmp_code = verify_v4_packet(
                     cpctx->rcv_buf, nrcv, snd_id, snd_seq
                 );
             } else if (fd == cpctx->v6fd){
-                debug_printf("verifying v6 packet"NL);
                 icmp_code = verify_v6_packet(
                     cpctx->rcv_buf, nrcv, snd_id, snd_seq
                 );
             } else {
-                /* should be unreachable */
+                fprintf(stderr, "unexpected file descriptor");
                 abort();
             }
             if (icmp_code >= 0){
-                /* successfully handled packet, `icmp_code` is set */
-                goto eploop_break;
+                goto epoll_dereg_fd;
             }
         }
-        debug_printf("did not received interested packet"NL);
-        t_rem.tv_sec  = t_rem.tv_sec  - t_st.tv_sec;
-        t_rem.tv_nsec = t_rem.tv_nsec - t_st.tv_nsec;
+        t_end_wait.tv_sec  -= t_start_wait.tv_sec;
+        t_end_wait.tv_nsec -= t_start_wait.tv_nsec;
         /*
             assume that `t_rem` is always greater equal than `t_st`
             and not too big from `wait_timeout`
         */
-        wait_timeout -= timespec2ms(&t_rem);
+        wait_timeout -= timespec2ms(&t_end_wait);
         if (wait_timeout < 0){
-            debug_printf("time quota consumed, break"NL);
             icmp_code = -1;
             break;
         }
     }
-eploop_break:
-    debug_printf("deregister fd = %d"NL, snd_fd);
+epoll_dereg_fd:
     ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_DEL, snd_fd, NULL);
     if (ret != 0){
         perror("remove fd from epoll fd");
         return -1;
     }
-    
-    delay->tv_sec  = dt.tv_sec  - t0.tv_sec;
-    delay->tv_nsec = dt.tv_nsec - t0.tv_nsec;
+
+    delay->tv_sec  = t_rcv.tv_sec  - t_snd.tv_sec;
+    delay->tv_nsec = t_rcv.tv_nsec - t_snd.tv_sec;
 
     return icmp_code;
 }

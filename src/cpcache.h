@@ -55,8 +55,13 @@ void cpcache_free(struct addrif_cache *aicache);
 
 /* cache interface mocking `getaddrinfo` */
 int cpcache_getaddrinfo(
-    struct addrif_cache *aicache, char *host,
-    const struct addrinfo *hint, struct addrinfo **pai
+    struct addrif_cache *aicache, char *host, int family, struct addrinfo **pai
 );
+
+/*
+    add interface?
+    - clean: explicitly clean expired cache
+    - update: explicitly update all expired cache
+*/
 
 #endif /* CPCACHE_H */

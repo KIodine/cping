@@ -48,3 +48,7 @@ clean:
 
 clean_all: clean
 	rm -f $(BINDST)
+
+# --- source file statistics ---
+count_lines:
+	@wc -lc $(addprefix $(SRCDIR)/, $(subst .o,.c,$(OBJS)) $(subst .o,.h,$(OBJS)))

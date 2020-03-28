@@ -45,8 +45,9 @@
     #define debug_printf(ignore, ...) ((void)0)
 #endif
 
-
+/* ICMP header size for both ICMP(v4) and ICMPv6. */
 #define ICMP_HDR_SZ 8UL
+/* Canonical value of ethernet v2. */
 #define ETH_MTU     1500UL
 
 
@@ -59,7 +60,9 @@ ssize_t init_icmp_pack(void *buf, size_t len);
 uint16_t inet_checksum16(char *buf, unsigned int len);
 int setup_icmp_er(int family, void *buf, size_t len, uint16_t id, uint16_t seq);
 
+/* Verify the package is for us or not. */
 int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq);
+/* Same but v6 version. */
 int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq);
 
 

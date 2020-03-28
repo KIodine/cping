@@ -16,7 +16,7 @@ static long clock_diff_us(struct timespec *restrict t0, struct timespec *restric
 static int cache_comparator(struct avlnode const *a, struct avlnode const *b);
 static void cache_free(struct avlnode *node);
 static struct ai_cache_entry *cache_alloc(
-    const char *host, const struct addrinfo *hint, struct addrinfo *ai,
+    const char *host, int family, struct addrinfo *ai,
     struct timespec *timeout
 );
 /* --- static function definitions -------------------------- */
@@ -75,7 +75,7 @@ int cache_comparator(
 
 static
 struct ai_cache_entry *cache_alloc(
-    const char *host, const struct addrinfo *hint, struct addrinfo *ai,
+    const char *host, int family, struct addrinfo *ai,
     struct timespec *timeout
 ){
     struct ai_cache_entry *entry;
@@ -90,7 +90,7 @@ struct ai_cache_entry *cache_alloc(
     entry->ai      = ai;
     entry->host    = host_str;
     entry->hostlen = hostlen;
-    entry->family  = hint->ai_family;
+    entry->family  = family;
     
     clock_gettime(CLOCK_MONOTONIC, &entry->expire);
     entry->expire.tv_sec  += timeout->tv_sec;
@@ -140,62 +140,72 @@ void cpcache_free(struct addrif_cache *aicache){
 
 /* `cpcache_getaddrinfo` */
 int cpcache_getaddrinfo(
-    struct addrif_cache *aicache, char *host,
-    const struct addrinfo *hint, struct addrinfo **pai
+    struct addrif_cache *aicache, char *host, int family,
+    struct addrinfo **pai
 ){
-    struct ai_cache_entry ai_hint, *ai_res;
+    struct ai_cache_entry cache_hint, *cache_res;
     struct avlnode *tmpnd;
+    struct addrinfo ai_hint;
     struct timespec now;
     int gai_ret = 0;
     size_t hostlen;
 
     hostlen = strlen(host);
 
-    ai_hint.family  = hint->ai_family;
-    ai_hint.host    = host;
-    ai_hint.hostlen = hostlen;
+    cache_hint.family  = family;
+    cache_hint.host    = host;
+    cache_hint.hostlen = hostlen;
 
-    tmpnd = avl_get(&aicache->tree, &ai_hint.node);
+    ai_hint.ai_family = family;
+    if (family == AF_INET){
+        ai_hint.ai_protocol = IPPROTO_ICMP;
+    } else {
+        ai_hint.ai_protocol = IPPROTO_ICMPV6;
+    }
+    ai_hint.ai_socktype = SOCK_RAW;
+    ai_hint.ai_flags    = AI_ADDRCONFIG;
+
+    tmpnd = avl_get(&aicache->tree, &cache_hint.node);
     if (tmpnd == NULL){
         debug_printf(
             "unknown host: %s, try get from getaddrinfo"NL, host
         );
-        gai_ret = getaddrinfo(host, NULL, hint, pai);
+        gai_ret = getaddrinfo(host, NULL, &ai_hint, pai);
         if (gai_ret == 0){
             debug_printf(
                 "successfully get `%s` from getaddrinfo"NL, host
             );
-            ai_res = cache_alloc(
-                host, hint, *pai, &aicache->timeout
+            cache_res = cache_alloc(
+                host, family, *pai, &aicache->timeout
             );
-            avl_insert(&aicache->tree, &ai_res->node);
+            avl_insert(&aicache->tree, &cache_res->node);
         } else {
             debug_printf("can't get addrinfo of host: %s"NL, host);
         }
     } else {
         debug_printf("host %s was cached"NL, host);
-        ai_res = container_of(tmpnd, struct ai_cache_entry, node);
+        cache_res = container_of(tmpnd, struct ai_cache_entry, node);
         clock_gettime(CLOCK_MONOTONIC, &now);
-        if (now.tv_sec  > ai_res->expire.tv_sec &&
-            now.tv_nsec > ai_res->expire.tv_nsec
+        if (now.tv_sec  > cache_res->expire.tv_sec &&
+            now.tv_nsec > cache_res->expire.tv_nsec
         ){
             debug_printf("cached result expired, try get new one"NL);
-            gai_ret = getaddrinfo(host, NULL, hint, pai);
+            gai_ret = getaddrinfo(host, NULL, &ai_hint, pai);
             if (gai_ret == 0){
-                freeaddrinfo(ai_res->ai);
-                ai_res->ai = *pai;
-                clock_gettime(CLOCK_MONOTONIC, &ai_res->expire);
-                ai_res->expire.tv_sec  += aicache->timeout.tv_sec;
-                ai_res->expire.tv_nsec += aicache->timeout.tv_nsec;
+                freeaddrinfo(cache_res->ai);
+                cache_res->ai = *pai;
+                clock_gettime(CLOCK_MONOTONIC, &cache_res->expire);
+                cache_res->expire.tv_sec  += aicache->timeout.tv_sec;
+                cache_res->expire.tv_nsec += aicache->timeout.tv_nsec;
             } else {
                 debug_printf("cannot update cache of host: %s"NL, host);
                 debug_printf("reason: %s"NL, gai_strerror(gai_ret));
             }
         } else {
             debug_printf(
-                "return cached result of host: `%s`"NL, ai_res->host
+                "return cached result of host: `%s`"NL, cache_res->host
             );
-            *pai = ai_res->ai;
+            *pai = cache_res->ai;
         }
     }
 
