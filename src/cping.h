@@ -29,7 +29,15 @@ struct cping_ctx {
 };
 
 
+struct trnode {
+    char   *fqdn;
+    size_t  namelen;
+    struct timespec delay;
+};
+
+/* Initialize `struct cping_ctx`. */
 int  cping_init(struct cping_ctx *cpctx);
+/* Finalize `struct cping_ctx`. */
 void cping_fini(struct cping_ctx *cpctx);
 
 /*
@@ -39,7 +47,7 @@ void cping_fini(struct cping_ctx *cpctx);
     time exceeded and destination unreachable are allowed to pass.
 */
 int cping_once(
-    struct cping_ctx *cpctx, const char *host, int ver, const int timeout,
+    struct cping_ctx *cpctx, const char *host, int ver, int timeout,
     struct timespec *delay
 );
 
@@ -54,7 +62,7 @@ int cping_tracert(
    function of `cping_once`. */
 int cping_addr_once(
     struct cping_ctx *cpctx, struct sockaddr *addr, socklen_t addrlen,
-    const int timeout, struct timespec *delay
+    int timeout, struct timespec *delay
 );
 
 /* ---------------------------------------------------- */

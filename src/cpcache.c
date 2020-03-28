@@ -186,7 +186,7 @@ int cpcache_getaddrinfo(
         debug_printf("host %s was cached"NL, host);
         cache_res = container_of(tmpnd, struct ai_cache_entry, node);
         clock_gettime(CLOCK_MONOTONIC, &now);
-        if (now.tv_sec  > cache_res->expire.tv_sec &&
+        if (now.tv_sec  > cache_res->expire.tv_sec ||
             now.tv_nsec > cache_res->expire.tv_nsec
         ){
             debug_printf("cached result expired, try get new one"NL);

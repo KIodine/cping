@@ -11,6 +11,14 @@
 #define ARRAY_SZ(arr) (sizeof(arr)/sizeof((arr)[0]))
 
 
+static inline
+double timespec2ms_d(struct timespec *ts){
+    double sec, nsec;
+    sec = ((double)ts->tv_sec)*1e3;
+    nsec = ((double)ts->tv_nsec)/1e6;
+    return sec + nsec;
+}
+
 /*  TODO:
     - test timeout mechanism
     - test `dst_unreach` code verifying
@@ -54,6 +62,7 @@ int basic_test(void){
         ret = cping_once(
             &cp, tt->host, tt->family, tt->timeout, &delay
         );
+        printf("[test]using time: %.3f ms"NL, timespec2ms_d(&delay));
         if (ret != tt->expect){
             fprintf(stderr, "%s", tt->err_msg);
             fprintf(stderr, "test stopped at test case No.%d"NL, i+1);

@@ -10,6 +10,8 @@
     - family and addr as comparing key.
 - [X] hard-code addrinfo hint, we only use one kind of address
   after all.
+- [ ] Use `/dev/random` than psuedo-random `rand`?
+- [X] Blocking `timeout` input from less than zero?
 - provisional interaface:
     ```
     - `int cping_addr_once(cpctx, addr, addrlen, timeout)`

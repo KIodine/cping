@@ -370,7 +370,7 @@ void avl_validate(struct avltree *tree){
 
 static
 void node_validate(struct avlnode *node, avl_cmp_t cmp){
-    int res;
+    int res = 0;
     if (node == NULL){
         return;
     }

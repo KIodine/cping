@@ -6,11 +6,115 @@
 
 static inline int timespec2ms(struct timespec *ts);
 
+static int sonar(
+    struct cping_ctx *cpctx, int snd_fd, struct sockaddr *addr,
+    socklen_t addrlen, int timeout, struct timespec *delay
+);
+
 /* --- static funtion --------------------------------------- */
 
 static inline
 int timespec2ms(struct timespec *ts){
     return (ts->tv_sec*1000UL + ts->tv_nsec/1000000UL);
+}
+
+static int sonar(
+    struct cping_ctx *cpctx, int snd_fd, struct sockaddr *addr,
+    socklen_t addrlen, int timeout, struct timespec *delay
+){
+    struct sockaddr_storage saddr_store = {0};
+    struct epoll_event ev = {0};
+    struct timespec t_wait_start, t_wait_end, t_snd, t_rcv;
+    socklen_t sastlen = 0;
+    int rcv_fd, nrcv, ret, icmp_code = 0;
+    uint16_t snd_id, snd_seq;
+
+    snd_id  = random() & 0xFFFF;
+    snd_seq = 0;
+
+    debug_printf("setup id = %d, seq = %d"NL, snd_id, snd_seq);
+
+    setup_icmp_er(
+        addr->sa_family, cpctx->icmp_pack, cpctx->paclen,
+        snd_id, snd_seq
+    );
+
+    ret = sendto(
+        snd_fd, cpctx->icmp_pack, cpctx->paclen, 0, addr, addrlen
+    );
+    if (ret == -1){
+        perror("send ICMP packet");
+        icmp_code = -1;
+        goto finish;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t_snd);
+
+    for (;;){
+        clock_gettime(CLOCK_MONOTONIC, &t_wait_start);
+        ret = epoll_wait(cpctx->epfd, &ev, 1, timeout);
+        clock_gettime(CLOCK_MONOTONIC, &t_wait_end);
+        if (ret < 0){
+            perror("waiting for fd ready");
+            goto finish;
+        }
+        if (ret == 0){
+            /* No fd is ready, indicating timeout. */
+            icmp_code = -1;
+            clock_gettime(CLOCK_MONOTONIC, &t_rcv);
+            goto finish;
+        }
+        rcv_fd = ev.data.fd;
+        assert(rcv_fd == snd_fd);
+
+        for (;;){
+            nrcv = recvfrom(
+                rcv_fd, cpctx->rcv_buf, cpctx->buflen, 0,
+                (struct sockaddr*)&saddr_store, &sastlen
+            );
+            clock_gettime(CLOCK_MONOTONIC, &t_rcv);
+            if (nrcv == -1){
+                if (errno == EAGAIN){
+                    /* Nothing to receive, `epoll_wait` again. */
+                    break;
+                } else {
+                    perror("receiving packet");
+                    icmp_code = -1;
+                    goto finish;
+                }
+            }
+            if (rcv_fd == cpctx->v4fd){
+                icmp_code = verify_v4_packet(
+                    cpctx->rcv_buf, nrcv, snd_id, snd_seq
+                );
+            } else if (rcv_fd == cpctx->v6fd){
+                icmp_code = verify_v6_packet(
+                    cpctx->rcv_buf, nrcv, snd_id, snd_seq
+                );
+            } else {
+                fprintf(stderr, "unexpected file descriptor");
+                abort();
+            }
+            if (icmp_code >= 0){
+                goto finish;
+            }
+        }
+        t_wait_end.tv_sec  -= t_wait_start.tv_sec;
+        t_wait_end.tv_nsec -= t_wait_start.tv_nsec;
+        /*
+            assume that `t_rem` is always greater equal than `t_st`
+            and not too big from `wait_timeout`
+        */
+       timeout -= timespec2ms(&t_wait_end);
+       if (timeout < 0){
+           icmp_code = -1;
+           break;
+       }
+    }
+finish:
+    delay->tv_sec  = t_rcv.tv_sec  - t_snd.tv_sec;
+    delay->tv_nsec = t_rcv.tv_nsec - t_snd.tv_nsec;
+
+    return icmp_code;
 }
 
 /* ---------------------------------------------------------- */
@@ -111,20 +215,12 @@ int cping_once(
 
 int cping_addr_once(
     struct cping_ctx *cpctx, struct sockaddr *addr, socklen_t addrlen,
-    const int timeout, struct timespec *delay
+    int timeout, struct timespec *delay
 ){
-    struct timespec t_snd, t_rcv, t_start_wait, t_end_wait;
-    struct sockaddr_storage saddr_store;
     struct epoll_event ep_event = {0};
-    socklen_t sastlen = sizeof(struct sockaddr_storage);
-    int wait_timeout = timeout;
-    int ret, snd_fd, fd, nrcv, family, icmp_code = 0;
-    uint16_t snd_id, snd_seq;
+    int ret, snd_fd, family, icmp_code = 0;
 
     family = addr->sa_family;
-
-    snd_id  = random() & 0xFFFF;
-    snd_seq = 0;
 
     switch(family){
     case AF_INET:
@@ -135,19 +231,11 @@ int cping_addr_once(
         fprintf(stderr, "unexpected family %d"NL, family);
         abort();
     }
-
-    setup_icmp_er(
-        addr->sa_family, cpctx->icmp_pack, cpctx->paclen, snd_id, snd_seq
-    );
-    ret = sendto(
-        snd_fd, cpctx->icmp_pack, cpctx->paclen, 0,
-        addr, addrlen
-    );
-    if (ret == -1){
-        perror("send icmp pack");
-        return 0;
+    
+    if (timeout < 0){
+        fprintf(stderr, "timeout less than zero is not allowed"NL);
+        return -1;
     }
-    clock_gettime(CLOCK_MONOTONIC, &t_snd);
 
     ep_event.events = EPOLLIN|EPOLLET;
     ep_event.data.fd = snd_fd;
@@ -158,74 +246,15 @@ int cping_addr_once(
         return -1;
     }
 
-    for (;;){
-        clock_gettime(CLOCK_MONOTONIC, &t_start_wait);
-        ret = epoll_wait(cpctx->epfd, &ep_event, 1, wait_timeout);
-        clock_gettime(CLOCK_MONOTONIC, &t_end_wait);
-        if (ret < 0){
-            perror("waiting for fd ready");
-            goto epoll_dereg_fd;
-        }
-        if (ret == 0){
-            /* No fd is ready, indicating timeout. */
-            icmp_code = -1;
-            goto epoll_dereg_fd;
-        }
-        fd = ep_event.data.fd;
-        assert(fd == snd_fd);
-
-        for (;;){
-            nrcv = recvfrom(
-                fd, cpctx->rcv_buf, cpctx->buflen, 0,
-                (struct sockaddr*)&saddr_store, &sastlen
-            );
-            clock_gettime(CLOCK_MONOTONIC, &t_rcv);
-            if (nrcv == -1){
-                if (errno == EAGAIN){
-                    break;
-                } else {
-                    perror("receiving packet");
-                    icmp_code = -1;
-                    goto epoll_dereg_fd;
-                }
-            }
-            if (fd == cpctx->v4fd){
-                icmp_code = verify_v4_packet(
-                    cpctx->rcv_buf, nrcv, snd_id, snd_seq
-                );
-            } else if (fd == cpctx->v6fd){
-                icmp_code = verify_v6_packet(
-                    cpctx->rcv_buf, nrcv, snd_id, snd_seq
-                );
-            } else {
-                fprintf(stderr, "unexpected file descriptor");
-                abort();
-            }
-            if (icmp_code >= 0){
-                goto epoll_dereg_fd;
-            }
-        }
-        t_end_wait.tv_sec  -= t_start_wait.tv_sec;
-        t_end_wait.tv_nsec -= t_start_wait.tv_nsec;
-        /*
-            assume that `t_rem` is always greater equal than `t_st`
-            and not too big from `wait_timeout`
-        */
-        wait_timeout -= timespec2ms(&t_end_wait);
-        if (wait_timeout < 0){
-            icmp_code = -1;
-            break;
-        }
-    }
-epoll_dereg_fd:
+    icmp_code = sonar(
+        cpctx, snd_fd, (struct sockaddr*)addr, addrlen, timeout, delay
+    );
+    
     ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_DEL, snd_fd, NULL);
     if (ret != 0){
         perror("remove fd from epoll fd");
         return -1;
     }
-
-    delay->tv_sec  = t_rcv.tv_sec  - t_snd.tv_sec;
-    delay->tv_nsec = t_rcv.tv_nsec - t_snd.tv_sec;
 
     return icmp_code;
 }
