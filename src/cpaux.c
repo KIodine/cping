@@ -137,16 +137,18 @@ int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
 
     bytes  = buf;
     hdrlen = 4*(bytes[0] & 0xF);
+    debug_printf("offset = %d"NL, hdrlen);
     bytes += hdrlen; /* skip header */
 
     icmp = (struct icmp*)bytes;
-    type = icmp->icmp_code;
+    type = icmp->icmp_type;
 
     debug_printf("v4 received chksum = %X"NL, icmp->icmp_cksum);
     assert(inet_checksum16(bytes, len - hdrlen) == 0);
 
     if (type == ICMP_ECHOREPLY){
         /* no need to move the pointer */;
+        debug_printf("received ECHO_REPLY4"NL);
     } else if (type == ICMP_DEST_UNREACH || type == ICMP_TIME_EXCEEDED){
         /* skip icmp header and IPv4 header */
         if (len < (20UL*2 + 8UL*2)){
@@ -156,6 +158,7 @@ int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
             );
             abort();
         }
+        debug_printf("received DST_UNREACH4 or TIME_EXCEEDED4"NL);
         bytes += 8UL;
         bytes += 4UL*(bytes[0] & 0xF);
         icmp = (struct icmp*)bytes;
@@ -177,6 +180,8 @@ int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
         /* it's not for us */
         debug_printf("v4 received others"NL);
         type = -1;
+    } else {
+        debug_printf("v4 verify success"NL);
     }
 no_handle:
     return type;
@@ -205,6 +210,7 @@ int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
 
     if (type6 == ICMP6_ECHO_REPLY){
         /* do nothing */;
+        debug_printf("received ECHO_REPLY6"NL);
     } else if (type6 == ICMP6_DST_UNREACH || type6 == ICMP6_TIME_EXCEEDED){
         /* skip icmp6 header and IPv6 header */
         if (len < (min_v6_icmp_sz + 48UL)){
@@ -214,6 +220,7 @@ int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
             );
             abort();
         }
+        debug_printf("received DST_UNREACH6 or TIME_EXCEEDED6");
         bytes += 8UL;
         bytes += 40UL;
         icmp6 = (struct icmp6_hdr*)bytes;
@@ -233,6 +240,8 @@ int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
 
     if (packet_id != id || packet_seq != seq){
         type6 = -1;
+    } else {
+        debug_printf("v6 verify success"NL);
     }
 no_handle:
     return type6;

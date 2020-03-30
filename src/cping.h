@@ -30,9 +30,13 @@ struct cping_ctx {
 
 
 struct trnode {
-    char   *fqdn;
-    size_t  namelen;
-    struct timespec delay;
+    char            *fqdn;
+    struct sockaddr *addr;
+    struct timespec  delay;
+    size_t           namelen;
+    socklen_t        addrlen;
+    struct trnode   *next;
+    /* `struct list node` */
 };
 
 /* Initialize `struct cping_ctx`. */
@@ -51,10 +55,13 @@ int cping_once(
     struct timespec *delay
 );
 
-int cping_tracert(
+struct trnode *cping_tracert(
     struct cping_ctx *cpctx, const char *host, int ver, const int timeout,
     const int maxhop
 );
+
+void freetrnode(struct trnode *head);
+
 
 /* lower level APIs */
 

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <arpa/inet.h>
 #include "cping.h"
 
 
@@ -76,7 +77,64 @@ finish:
     return exit_code;
 }
 
+int traceroute_test(void){
+    struct cping_ctx cp;
+    struct trnode *tr;
+    double fdelay;
+    char present[256] = {0};
+    int ret = 0;
+
+    ret = cping_init(&cp);
+    if (ret == -1){
+        fprintf(stderr, "can't init cping"NL);
+        return EXIT_FAILURE;
+    }
+
+    tr = cping_tracert(&cp, "www.example.com", AF_INET, 300, 30);
+    int i = 0;
+    for (struct trnode *tmp = tr; tmp != NULL; tmp = tmp->next){
+        struct sockaddr_in *addr4;
+        char *fqdn;
+
+        memset(present, 0, 256);
+        
+        addr4 = (struct sockaddr_in*)tmp->addr;
+        if (addr4 != NULL){
+            printf(
+                "[test]family = %d"NL, tmp->addr->sa_family
+            );
+            inet_ntop(
+                AF_INET, &addr4->sin_addr,
+                present, 256
+            );
+            fqdn = tmp->fqdn;
+            fdelay = timespec2ms_d(&tmp->delay);
+        } else {
+            printf("[test] can't get node name"NL);
+            present[0] = 'x';
+            fqdn = "*";
+            fdelay = -1.0;
+        }
+        
+        printf(
+            "[%2d]fqdn:  %s"NL
+            "    addr:  %s"NL
+            "    delay: %.3f ms"NL,
+            i, fqdn, present, fdelay
+        );
+        ++i;
+    }
+    freetrnode(tr);
+
+    cping_fini(&cp);
+
+    return ret;
+}
+
 int main(void){
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
     basic_test();
+    traceroute_test();
     return 0;
 }

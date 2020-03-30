@@ -1,16 +1,21 @@
 # QUESTION
 - [X] use the first addrinfo anyway?
+    - provided lower level interface.
 - how to handle complex symbol references across source files?
   how to properly seperate symbol definitions?
 
 # PROPOSAL
+- [ ] Use `/dev/random` than psuedo-random `rand`?
+- [ ] More aggressive abstraction on `sonar`?
+- [X] Isolate `send-recv-verify` logic, expose other message
+    as much as possible.
+    - need ancilliary structure.
 - [X] seperate the send-recv precedure as `cping_addr_once`.
 - [X] provide low-level interface using `struct sockaddr`.
 - multi-target ping with `_probe_multi`.
     - family and addr as comparing key.
 - [X] hard-code addrinfo hint, we only use one kind of address
   after all.
-- [ ] Use `/dev/random` than psuedo-random `rand`?
 - [X] Blocking `timeout` input from less than zero?
 - provisional interaface:
     ```

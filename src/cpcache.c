@@ -186,9 +186,11 @@ int cpcache_getaddrinfo(
         debug_printf("host %s was cached"NL, host);
         cache_res = container_of(tmpnd, struct ai_cache_entry, node);
         clock_gettime(CLOCK_MONOTONIC, &now);
+        /*  FIXME: logical error on time comparison. */
         if (now.tv_sec  > cache_res->expire.tv_sec ||
             now.tv_nsec > cache_res->expire.tv_nsec
         ){
+            debug_printf("now=%d, cache=%d"NL, now.tv_sec, cache_res->expire.tv_sec);
             debug_printf("cached result expired, try get new one"NL);
             gai_ret = getaddrinfo(host, NULL, &ai_hint, pai);
             if (gai_ret == 0){
