@@ -10,6 +10,7 @@
     this function assumes all 3 arguments are distinct pointer.
 */
 static void ts_diff(struct timespec *restrict dt, struct timespec *restrict t1, struct timespec *restrict t0);
+static int ts_cmp(struct timespec *a, struct timespec *b);
 static long clock_diff_ns(struct timespec *restrict t0, struct timespec *restrict t1);
 static long clock_diff_us(struct timespec *restrict t0, struct timespec *restrict t1);
 
@@ -33,6 +34,27 @@ void ts_diff(
         dt->tv_nsec += 1000000000;
     }
     return;
+}
+
+static
+int ts_cmp(struct timespec *a, struct timespec *b){
+    if (a->tv_sec == b->tv_sec){
+        /* do nothing */;
+    }
+    if (a->tv_sec > b->tv_sec){
+        return 1;
+    } else {
+        return -1;
+    }
+    if (a->tv_nsec == b->tv_nsec){
+        /* do nothing */;
+    }
+    if (a->tv_nsec > b->tv_nsec){
+        return 1;
+    } else {
+        return -1;
+    }
+    return 0;
 }
 
 static
@@ -187,9 +209,7 @@ int cpcache_getaddrinfo(
         cache_res = container_of(tmpnd, struct ai_cache_entry, node);
         clock_gettime(CLOCK_MONOTONIC, &now);
         /*  FIXME: logical error on time comparison. */
-        if (now.tv_sec  > cache_res->expire.tv_sec ||
-            now.tv_nsec > cache_res->expire.tv_nsec
-        ){
+        if (ts_cmp(&now, &cache_res->expire) > 0){
             debug_printf("now=%d, cache=%d"NL, now.tv_sec, cache_res->expire.tv_sec);
             debug_printf("cached result expired, try get new one"NL);
             gai_ret = getaddrinfo(host, NULL, &ai_hint, pai);

@@ -64,7 +64,7 @@ static int sonar(
     uint16_t snd_id, snd_seq;
 
     /* Aliasing sres data. */
-    saddr_store = &sres->addr;      assert(saddr_store != NULL);
+    saddr_store = &sres->addr;
     sastlen     = &sres->addrlen;
     delay       = &sres->delay;
 
@@ -136,7 +136,6 @@ static int sonar(
                 debug_printf("recv = %d"NL, nrcv);
             }
 
-            /* Use family as switch than fd? */
             if (rcv_fd == cpctx->v4fd){
                 icmp_type = verify_v4_packet(
                     cpctx->rcv_buf, nrcv, snd_id, snd_seq
@@ -155,7 +154,6 @@ static int sonar(
         }
 
         ts_diff(&t_wait_dt, &t_wait_end, &t_wait_start);
-
         /*
             assume that `t_rem` is always greater equal than `t_st`
             and not too big from `wait_timeout`
@@ -309,30 +307,6 @@ int cping_addr_once(
     return icmp_type;
 }
 
-/*
-struct list *cping_tracert(cpctx, host, family, timeout, maxhop):
-    struct trnode *head, *tmp;
-    for i in range(1, maxhop):
-        setsockopt(snd_fd, domain, optlevel, &limit, sizeof(limit))
-        alloc node
-        for j in range(try):
-            do sonar
-            if response:
-                record address
-                record delay
-        getnameinfo // the max length of fqdn is 253*.
-        append node
-        if reached target host:
-            break
-    limit = -1 // recover setting.
-    setsockopt(snd_fd, domain, proto, &limit, sizeof(limit))
-    return head;
-
-*256 in raw bytes actually, human-readable part is 253.
-
-*/
-
-#define NAME_SZ 256UL
 struct trnode *cping_tracert(
     struct cping_ctx *cpctx, const char *host, int ver, const int timeout,
     const int maxhop
@@ -340,12 +314,10 @@ struct trnode *cping_tracert(
     struct sonar_res sres = {0};
     struct trnode   *head = NULL, **cur;
     struct addrinfo *ai   = NULL;
+#define NAME_SZ 256UL
     char fqdn[NAME_SZ] = {0};
     int ret = 0, limit = 0, icmp_type = 0, snd_fd = 0;
     int lvl, opt, namelen;
-#ifndef NDEBUG
-    char present[INET6_ADDRSTRLEN];
-#endif
     
     cur = &head;
     
@@ -387,36 +359,26 @@ struct trnode *cping_tracert(
 
         assert(sres.addrlen != 0);
         if (ret >= 0){
-            /* TODO: decrease space usage. */
-            (*cur)->addr    = calloc(1, sizeof(struct sockaddr_storage));
+            /* TODO: decrease space usage. -> done, not tested. */
+
+            size_t addr_sz;
+            switch (sres.addr.ss_family){
+            case AF_INET:
+                addr_sz = sizeof(struct sockaddr_in);  break;
+            case AF_INET6:
+                addr_sz = sizeof(struct sockaddr_in6); break;
+            }
+            (*cur)->addr    = calloc(1, addr_sz);
             (*cur)->addrlen = sres.addrlen;
-            memcpy((*cur)->addr,  &sres.addr,  sizeof(struct sockaddr_storage));
+            memcpy((*cur)->addr,  &sres.addr,  addr_sz);
+            
             debug_printf("addr copied"NL);
         } else {
-            /* TODO: handle timeout situation. */
+            /* Just leave these fields NULL. */;
             debug_printf("! addr not copied"NL);
         }
         memcpy(&(*cur)->delay, &sres.delay, sizeof(struct timespec));
 
-#ifndef NDEBUG
-        memset(present, 0, INET6_ADDRSTRLEN);
-        debug_printf("`sres` family = %d"NL, sres.addr.ss_family);
-        switch (ver){
-        case AF_INET:
-            inet_ntop(
-                ver, &((struct sockaddr_in*)&sres.addr)->sin_addr,
-                present, INET6_ADDRSTRLEN
-            ); break;
-        case AF_INET6:
-            inet_ntop(
-                ver, &((struct sockaddr_in6*)&sres.addr)->sin6_addr,
-                present, INET6_ADDRSTRLEN
-            ); break;
-        }
-        debug_printf(
-            "result from `%s`, (len=%u)"NL, present, sres.addrlen
-        );
-#endif
         if (ret >= 0){
             memset(fqdn, 0, NAME_SZ);
             ret = getnameinfo(
@@ -424,7 +386,7 @@ struct trnode *cping_tracert(
                 fqdn, NAME_SZ, NULL, 0, 0
             );
             if (ret != 0){
-                debug_printf("%s"NL, gai_strerror(ret));
+                fprintf(stderr, "%s"NL, gai_strerror(ret));
             }
 
             namelen         = strlen(fqdn);

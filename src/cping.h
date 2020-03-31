@@ -36,7 +36,6 @@ struct trnode {
     size_t           namelen;
     socklen_t        addrlen;
     struct trnode   *next;
-    /* `struct list node` */
 };
 
 /* Initialize `struct cping_ctx`. */
@@ -55,11 +54,13 @@ int cping_once(
     struct timespec *delay
 );
 
+/*  Tracking passing nodes on way to target, returns a list-like
+    structure. */
 struct trnode *cping_tracert(
     struct cping_ctx *cpctx, const char *host, int ver, const int timeout,
     const int maxhop
 );
-
+/*  Release resources used by `struct trnode`. */
 void freetrnode(struct trnode *head);
 
 
@@ -77,7 +78,6 @@ int cping_addr_once(
 /*  PROPOSAL:
     - ping multiple ip at once
     - monitor multiple ip
-    - tracert
 */
 
 #endif /* CPING_H */

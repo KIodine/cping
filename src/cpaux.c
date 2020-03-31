@@ -146,10 +146,12 @@ int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     debug_printf("v4 received chksum = %X"NL, icmp->icmp_cksum);
     assert(inet_checksum16(bytes, len - hdrlen) == 0);
 
-    if (type == ICMP_ECHOREPLY){
+    switch (type){
+    case ICMP_ECHOREPLY:
         /* no need to move the pointer */;
-        debug_printf("received ECHO_REPLY4"NL);
-    } else if (type == ICMP_DEST_UNREACH || type == ICMP_TIME_EXCEEDED){
+        debug_printf("received ECHO_REPLY4"NL); break;
+    case ICMP_DEST_UNREACH:
+    case ICMP_TIME_EXCEEDED:
         /* skip icmp header and IPv4 header */
         if (len < (20UL*2 + 8UL*2)){
             fprintf(stderr,
@@ -161,8 +163,8 @@ int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
         debug_printf("received DST_UNREACH4 or TIME_EXCEEDED4"NL);
         bytes += 8UL;
         bytes += 4UL*(bytes[0] & 0xF);
-        icmp = (struct icmp*)bytes;
-    } else {
+        icmp = (struct icmp*)bytes; break;
+    default:
         debug_printf("not handling code4: %d"NL, type);
         type = -1;
         goto no_handle;
@@ -206,13 +208,13 @@ int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     type6 = icmp6->icmp6_type;
 
     debug_printf("v6 received checksum = %X"NL, icmp6->icmp6_cksum);
-    //assert(inet_checksum16(bytes, len) == 0);
 
-    if (type6 == ICMP6_ECHO_REPLY){
+    switch (type6){
+    case ICMP6_ECHO_REPLY:
         /* do nothing */;
-        debug_printf("received ECHO_REPLY6"NL);
-    } else if (type6 == ICMP6_DST_UNREACH || type6 == ICMP6_TIME_EXCEEDED){
-        /* skip icmp6 header and IPv6 header */
+        debug_printf("received ECHO_REPLY6"NL); break;
+    case ICMP6_DST_UNREACH:
+    case ICMP6_TIME_EXCEEDED:
         if (len < (min_v6_icmp_sz + 48UL)){
             fprintf(stderr,
                 "received packet stream short than v6 minimum length of "
@@ -223,13 +225,13 @@ int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
         debug_printf("received DST_UNREACH6 or TIME_EXCEEDED6");
         bytes += 8UL;
         bytes += 40UL;
-        icmp6 = (struct icmp6_hdr*)bytes;
-    } else {
+        icmp6 = (struct icmp6_hdr*)bytes; break;
+    default:
         debug_printf("not handling type6: %d"NL, type6);
         type6 = -1;
         goto no_handle;
     }
-    
+
     packet_id  = ntohs(icmp6->icmp6_id);
     packet_seq = ntohs(icmp6->icmp6_seq);
 
