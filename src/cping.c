@@ -135,16 +135,21 @@ static int sonar(
             } else {
                 debug_printf("recv = %d"NL, nrcv);
             }
+            
+            if (saddr_store->ss_family != addr->sa_family){
+                continue;
+            }
 
-            if (rcv_fd == cpctx->v4fd){
+            switch(saddr_store->ss_family){
+            case AF_INET:
                 icmp_type = verify_v4_packet(
                     cpctx->rcv_buf, nrcv, snd_id, snd_seq
-                );
-            } else if (rcv_fd == cpctx->v6fd){
+                ); break;
+            case AF_INET6:
                 icmp_type = verify_v6_packet(
                     cpctx->rcv_buf, nrcv, snd_id, snd_seq
-                );
-            } else {
+                ); break;
+            default:
                 fprintf(stderr, "unexpected file descriptor");
                 abort();
             }
@@ -297,6 +302,8 @@ int cping_addr_once(
         return -1;
     }
 
+    /* `addrlen` indicates the length of buffer. */
+    sres.addrlen = sizeof(struct sockaddr_storage);
     icmp_type = sonar(
         cpctx, snd_fd, (struct sockaddr*)addr, addrlen, timeout, &sres
     );
