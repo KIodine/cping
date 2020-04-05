@@ -14,8 +14,6 @@
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp6.h>
 
-#include "cpcache.h"
-
 
 struct cping_ctx {
     int v4fd;
@@ -25,7 +23,6 @@ struct cping_ctx {
     void *rcv_buf;
     size_t paclen;
     size_t buflen;
-    struct addrif_cache *cache;
 };
 
 

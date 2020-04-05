@@ -1,0 +1,21 @@
+{
+    "env": {
+        "project_include_path": [
+            "${workspaceFolder}", "${workspaceFolder}/include"
+        ],
+        "project_compiler": "/usr/bin/gcc"
+    },
+    "configurations": [
+        {
+            "name": "Ubuntu-18.04",
+            "defines": [
+                "_GNU_SOURCE"
+            ],
+            "includePath": [
+                "${project_include_path}"
+            ],
+            "compilerPath": "${project_compiler}"
+        }
+    ],
+    "version": 4
+}

@@ -5,15 +5,17 @@ CDBGF := -g -O0
 VG := valgrind
 VFLAG := --leak-check=full --show-leak-kinds=all --verbose
 
+INCDIR := ./include
 SRCDIR := ./src
 LIBDIR := ./lib
 OBJDIR := ./obj
 BINDIR := ./bin
 
+CFLAG += -I$(INCDIR)
 # beware of the order of obj files, `ld` handles each obj file with
 # the order these file inputs and will not look back for "unsatisfied"
 # symbols.
-OBJS := cping.o cpaux.o avltree.o
+OBJS := cping.o cpaux.o
 TEST := main.o
 
 BIN := main
