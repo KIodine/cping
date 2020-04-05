@@ -3,7 +3,7 @@
 #include "cpcache.h"
 
 
-/* Store return data of `sonar`. */
+/* Store return data of `icmp_srv`. */
 struct sonar_res {
     struct sockaddr_storage addr;
     socklen_t               addrlen;
@@ -23,7 +23,7 @@ static inline int timespec2ms(struct timespec *ts);
 
 /* Send, recv and verify the packet, this function assumes
    the waiting epoll fd have exactly one socket fd registered. */
-static int sonar(
+static int icmp_srv(
     struct cping_ctx *cpctx, int snd_fd, struct sockaddr *addr,
     socklen_t addrlen, int timeout, struct sonar_res *sres
 );
@@ -49,8 +49,7 @@ int timespec2ms(struct timespec *ts){
     return (ts->tv_sec*1000UL + ts->tv_nsec/1000000UL);
 }
 
-/* TODO: use ancilliary data to compress the amount of parameter */
-static int sonar(
+static int icmp_srv(
     struct cping_ctx *cpctx, int snd_fd, struct sockaddr *addr,
     socklen_t addrlen, int timeout, struct sonar_res *sres
 ){
@@ -304,7 +303,7 @@ int cping_addr_once(
 
     /* `addrlen` indicates the length of buffer. */
     sres.addrlen = sizeof(struct sockaddr_storage);
-    icmp_type = sonar(
+    icmp_type = icmp_srv(
         cpctx, snd_fd, (struct sockaddr*)addr, addrlen, timeout, &sres
     );
 
@@ -315,22 +314,19 @@ int cping_addr_once(
 }
 
 struct trnode *cping_tracert(
-    struct cping_ctx *cpctx, const char *host, int ver, const int timeout,
-    const int maxhop
+    struct cping_ctx *cpctx, struct sockaddr *const saddr,
+    const socklen_t socklen, const int timeout, const int maxhop
 ){
     struct sonar_res sres = {0};
     struct trnode   *head = NULL, **cur;
-    struct addrinfo *ai   = NULL;
 #define NAME_SZ 256UL
     char fqdn[NAME_SZ] = {0};
     int ret = 0, limit = 0, icmp_type = 0, snd_fd = 0;
     int lvl, opt, namelen;
     
     cur = &head;
-    
-    ret = cpcache_getaddrinfo(cpctx->cache, host, ver, &ai);
 
-    switch(ver){
+    switch(saddr->sa_family){
     case AF_INET:
         lvl    = IPPROTO_IP;
         opt    = IP_TTL;
@@ -340,7 +336,7 @@ struct trnode *cping_tracert(
         opt    = IPV6_UNICAST_HOPS;
         snd_fd = cpctx->v6fd; break;
     default:
-        fprintf(stderr, "unexpected family %d"NL, ver);
+        fprintf(stderr, "unexpected family %d"NL, saddr->sa_family);
         abort();
     }
 
@@ -358,15 +354,14 @@ struct trnode *cping_tracert(
         /* NOTE: You can't leave this zero. */
         sres.addrlen = sizeof(struct sockaddr_storage);
         debug_printf("current hop: %d"NL, limit);
-        ret = sonar(
-            cpctx, snd_fd, ai->ai_addr, ai->ai_addrlen, timeout,
+        ret = icmp_srv(
+            cpctx, snd_fd, saddr, socklen, timeout,
             &sres
         );
-        debug_printf("sonar ret type: %d"NL, ret);
+        debug_printf("icmp_srv ret type: %d"NL, ret);
 
         assert(sres.addrlen != 0);
         if (ret >= 0){
-            /* TODO: decrease space usage. -> done, not tested. */
 
             size_t addr_sz;
             switch (sres.addr.ss_family){
@@ -407,7 +402,7 @@ struct trnode *cping_tracert(
 
         debug_printf(" --- --- --- "NL);
 
-        ret = memcmp(ai->ai_addr, &sres.addr, ai->ai_addrlen);
+        ret = memcmp(saddr, &sres.addr, socklen);
         if (ret == 0){
             debug_printf("compare equal, break now"NL);
             break;

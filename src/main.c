@@ -1,8 +1,13 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#undef _GNU_SOURCE
 #include "cping.h"
 
 
@@ -78,6 +83,7 @@ finish:
 }
 
 int traceroute_test(void){
+    struct addrinfo *ai, ai_hint = {0};
     struct cping_ctx cp;
     struct trnode *tr;
     double fdelay;
@@ -90,7 +96,16 @@ int traceroute_test(void){
         return EXIT_FAILURE;
     }
 
-    tr = cping_tracert(&cp, "www.example.com", AF_INET, 300, 30);
+    ai_hint.ai_family   = AF_INET;
+    ai_hint.ai_socktype = SOCK_RAW;
+    ai_hint.ai_protocol = IPPROTO_ICMP;
+    ai_hint.ai_flags    = 0;
+    ret = getaddrinfo("www.example.com", NULL, &ai_hint, &ai);
+    if (ret == -1){
+        fprintf(stderr, "can't get addrinfo: %s"NL, gai_strerror(ret));
+    }
+
+    tr = cping_tracert(&cp, ai->ai_addr, ai->ai_addrlen, 300, 30);
     int i = 0;
     for (struct trnode *tmp = tr; tmp != NULL; tmp = tmp->next){
         struct sockaddr_in *addr4;
@@ -125,6 +140,7 @@ int traceroute_test(void){
         ++i;
     }
     freetrnode(tr);
+    freeaddrinfo(ai);
 
     cping_fini(&cp);
 

@@ -57,8 +57,8 @@ int cping_once(
 /*  Tracking passing nodes on way to target, returns a list-like
     structure. */
 struct trnode *cping_tracert(
-    struct cping_ctx *cpctx, const char *host, int ver, const int timeout,
-    const int maxhop
+    struct cping_ctx *cpctx, struct sockaddr *const saddr,
+    const socklen_t socklen, const int timeout, const int maxhop
 );
 /*  Release resources used by `struct trnode`. */
 void freetrnode(struct trnode *head);
