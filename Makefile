@@ -13,7 +13,7 @@ BINDIR := ./bin
 # beware of the order of obj files, `ld` handles each obj file with
 # the order these file inputs and will not look back for "unsatisfied"
 # symbols.
-OBJS := cping.o cpaux.o cpcache.o avltree.o
+OBJS := cping.o cpaux.o avltree.o
 TEST := main.o
 
 BIN := main

@@ -1,6 +1,5 @@
 #include "cping.h"
 #include "cpaux.h"
-#include "cpcache.h"
 
 
 /* Store return data of `icmp_srv`. */
@@ -218,11 +217,6 @@ int cping_init(struct cping_ctx *cpctx){
     cpctx->rcv_buf = malloc(cpctx->buflen);
     memset(cpctx->rcv_buf, 0, cpctx->buflen);
 
-    /* >>> init cache if implemented <<< */
-    struct timespec tmp_to = {0};
-    tmp_to.tv_sec = 300;
-    cpctx->cache = cpcache_alloc(&tmp_to);
-
     return 0;
     /* error handling area */
 epfd_error:
@@ -242,9 +236,6 @@ void cping_fini(struct cping_ctx *cpctx){
     close(cpctx->epfd);
     free(cpctx->icmp_pack);
     free(cpctx->rcv_buf);
-    
-    /* release cache if implemented */
-    cpcache_free(cpctx->cache);
 
     return;
 }
@@ -253,26 +244,34 @@ int cping_once(
         struct cping_ctx *cpctx, const char *host, int family,
         const int timeout, struct timespec *delay
 ){
-    struct addrinfo *gai_res;
+    struct addrinfo *gai_res, ai_hint = {0};
     int ret = 0, icmp_type = 0;
 
 
-    if (family != AF_INET && family != AF_INET6){
+    ai_hint.ai_family   = family;
+    ai_hint.ai_flags    = AI_ADDRCONFIG;
+    ai_hint.ai_socktype = SOCK_RAW;
+    switch (family){
+    case AF_INET:
+        ai_hint.ai_protocol = IPPROTO_ICMP; break;
+    case AF_INET6:
+        ai_hint.ai_protocol = IPPROTO_ICMPV6; break;
+    default:
         fprintf(stderr, "unexpected family %d"NL, family);
         abort();
     }
 
-    /* get addrinfo from cache. the cache calls getaddrinfo if requested
-        host is not found. */
-    ret = cpcache_getaddrinfo(cpctx->cache, host, family, &gai_res);
+    ret = getaddrinfo(host, NULL, &ai_hint, &gai_res);
     if (ret != 0){
-        fprintf(stderr, "`cpcache_getaddrinfo`: %s"NL, gai_strerror(ret));
+        fprintf(stderr, "can't getaddrinfo: %s"NL, gai_strerror(ret));
         return -1;
     }
     
     icmp_type = cping_addr_once(
         cpctx, gai_res->ai_addr, gai_res->ai_addrlen, timeout, delay
     );
+
+    freeaddrinfo(gai_res);
 
     return icmp_type;
 }

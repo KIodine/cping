@@ -7,6 +7,9 @@
 # PROPOSAL
 - [ ] Use `/dev/random` than psuedo-random `rand`?
 - [ ] More aggressive abstraction on `sonar`?
+- [X] Remove addr caching mechanism, user must provide traget address
+      since host is not guarenteed a one-by-one mapping to IP address.
+- [X] Rename `sonar` to `icmp_srv`(send-receive-verify).
 - [X] Isolate `send-recv-verify` logic, expose other message
     as much as possible.
     - need ancilliary structure.
