@@ -1,0 +1,74 @@
+# QUESTION
+- [X] use the first addrinfo anyway?
+    - provided lower level interface.
+- how to handle complex symbol references across source files?
+  how to properly seperate symbol definitions?
+
+# PROPOSAL
+- [ ] Use `/dev/random` than psuedo-random `rand`?
+- [ ] More aggressive abstraction on `sonar`?
+- [X] Remove addr caching mechanism, user must provide traget address
+      since host is not guarenteed a one-by-one mapping to IP address.
+- [X] Rename `sonar` to `icmp_srv`(send-receive-verify).
+- [X] Isolate `send-recv-verify` logic, expose other message
+    as much as possible.
+    - need ancilliary structure.
+- [X] seperate the send-recv precedure as `cping_addr_once`.
+- [X] provide low-level interface using `struct sockaddr`.
+- multi-target ping with `_probe_multi`.
+    - family and addr as comparing key.
+- [X] hard-code addrinfo hint, we only use one kind of address
+  after all.
+- [X] Blocking `timeout` input from less than zero?
+- provisional interaface:
+    ```
+    - `int cping_addr_once(cpctx, addr, addrlen, timeout)`
+    - `int addr_map_<add|del>(addr_map, host, family)`
+        - each node is a composite data structure of treenode and
+          listnode.
+    - `int addr_map_for_each(addr_map, fptr, ctx)`
+    - `void addr_map_setup(addr_map, cache)`
+        - for each node, get addrinfo then set id and seq.
+          (uses the list attribute of node)
+    - `int cping_multi(cpctx, addr_map, timeout)`
+    - `int _probe_multi(cpctx, addr_map, timeout)`
+    ```
+- if use composite ds, on insert, push listnode and insert treenode
+  with key.
+
+- trace route interface
+    - return results in linked list?
+        ```
+        struct trnode *cping_tracert(
+            struct cping_ctx *cpctx, const char *host, int ver,
+            const int timeout, const int maxhop
+        );
+        ```
+    - also use composite data structure?
+        - mixing list and tree
+    - precedure:
+        ```
+        set limit to 1
+        for:
+            send icmp echo request n times
+            record each delay
+            increase limit
+            if target reached:
+                break
+        recover limit
+        ```
+    - how to set TTL/hoplimit with `sendmsg`?
+        - did not metioned in any document I've seen, the only way
+          seems to be:
+          ```
+          int ret;
+          int limit = /* -1, 0-255 */;
+          ret = setsockopt(
+              v6fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &limit, sizeof(limit)
+          );
+          if (ret == -1){
+              perror("set v6 unicast hoplimit");
+              /* do error recovery. */
+          }
+          ```
+          the similar process can be exert on IPv4 sockets.
