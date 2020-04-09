@@ -19,6 +19,7 @@ OBJS := cping.o cpaux.o tsutil.o
 TEST := main.o
 
 BIN := main
+LIB := libcping
 
 OBJDST := $(addprefix $(OBJDIR)/, $(OBJS) $(TEST))
 BINDST := $(BINDIR)/$(BIN)
@@ -36,6 +37,9 @@ create_objdir:
 create_bindir:
 	@mkdir -p $(BINDIR)
 
+create_libdir:
+	@mkdir -p $(LIBDIR)
+
 build_test: $(OBJDST) create_bindir
 	$(CC) $(CFLAG) $(OBJDST) -o $(BINDST)
 
@@ -45,11 +49,20 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c create_objdir
 check: build_test
 	sudo $(VG) $(VFLAG) $(BINDST)
 
+static: $(OBJDST) create_libdir
+	ar -rcs $(LIBDIR)/$(LIB).a $(OBJDST)
+
+# Set target-specific var.
+shared: CFLAG += -fPIC
+shared: $(OBJDST) create_libdir
+	$(CC) -shared $(CFLAG) $(OBJDST) -o $(LIBDIR)/$(LIB).so
+
 clean:
 	rm -f $(OBJDST)
 
 clean_all: clean
 	rm -f $(BINDST)
+	rm -f $(LIBDIR)/*
 
 # --- source file statistics ---
 count_lines:

@@ -254,7 +254,7 @@ int cping_addr_once(
     int timeout, struct timespec *delay
 ){
     struct srv_res sres = {0};
-    int ret, snd_fd, family, icmp_type = 0;
+    int snd_fd, family, icmp_type = 0;
 
     family = addr->sa_family;
 
