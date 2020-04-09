@@ -1,65 +1,36 @@
 #include "cping.h"
 #include "cpaux.h"
-
+#include "tsutil.h"
 
 /* Store return data of `icmp_srv`. */
-struct sonar_res {
+struct srv_res {
     struct sockaddr_storage addr;
     socklen_t               addrlen;
     struct timespec         delay;
 };
 
-struct sonar_arg {
-    int              snd_fd;
-    int              timeout;
-    struct sockaddr *addr;
-    socklen_t        addrlen;
-};
-
 /* --- static function declarations ------------------------- */
-
-static inline int timespec2ms(struct timespec *ts);
 
 /* Send, recv and verify the packet, this function assumes
    the waiting epoll fd have exactly one socket fd registered. */
 static int icmp_srv(
     struct cping_ctx *cpctx, int snd_fd, struct sockaddr *addr,
-    socklen_t addrlen, int timeout, struct sonar_res *sres
+    socklen_t addrlen, int timeout, struct srv_res *sres
 );
-
-/* --- static funtion --------------------------------------- */
-
-static
-void ts_diff(
-    struct timespec *restrict dt, struct timespec *restrict t1,
-    struct timespec *restrict t0
-){
-    dt->tv_sec  = t1->tv_sec  - t0->tv_sec;
-    dt->tv_nsec = t1->tv_nsec - t0->tv_nsec;
-    if (dt->tv_nsec < 0){
-        dt->tv_sec  -= 1;
-        dt->tv_nsec += 1000000000;
-    }
-    return;
-}
-
-static inline
-int timespec2ms(struct timespec *ts){
-    return (ts->tv_sec*1000UL + ts->tv_nsec/1000000UL);
-}
 
 static int icmp_srv(
     struct cping_ctx *cpctx, int snd_fd, struct sockaddr *addr,
-    socklen_t addrlen, int timeout, struct sonar_res *sres
+    socklen_t addrlen, int timeout, struct srv_res *sres
 ){
     struct sockaddr_storage *saddr_store;
     struct epoll_event       ev = {0};
-    struct timespec t_wait_start, t_wait_end, t_wait_dt,
+    struct timespec t_wait_start, t_wait_dt,
                     t_snd, t_rcv;
     struct timespec *delay;
     socklen_t       *sastlen;
-    int      rcv_fd, nrcv, ret, icmp_type = 0;
     uint16_t snd_id, snd_seq;
+    long ts_to_ms;
+    int  rcv_fd, nrcv, ret, icmp_type = 0;
 
     /* Aliasing sres data. */
     saddr_store = &sres->addr;
@@ -87,6 +58,7 @@ static int icmp_srv(
     ret = sendto(
         snd_fd, cpctx->icmp_pack, cpctx->paclen, 0, addr, addrlen
     );
+    
     if (ret == -1){
         perror("send ICMP packet");
         icmp_type = -1;
@@ -97,7 +69,7 @@ static int icmp_srv(
     for (;;){
         clock_gettime(CLOCK_MONOTONIC, &t_wait_start);
         ret = epoll_wait(cpctx->epfd, &ev, 1, timeout);
-        clock_gettime(CLOCK_MONOTONIC, &t_wait_end);
+        clock_gettime(CLOCK_MONOTONIC, &t_wait_dt);
         if (ret < 0){
             perror("waiting for fd ready");
             goto finish;
@@ -156,16 +128,17 @@ static int icmp_srv(
             }
         }
 
-        ts_diff(&t_wait_dt, &t_wait_end, &t_wait_start);
+        ts_sub(&t_wait_dt, &t_wait_dt, &t_wait_start);
         /*
-            assume that `t_rem` is always greater equal than `t_st`
-            and not too big from `wait_timeout`
+            assume that `t_wait_dt` is always greater equal than `t_wait_start`
+            and not too big from `t_wait_start`
         */
-       timeout -= timespec2ms(&t_wait_dt);
-       if (timeout < 0){
-           icmp_type = -1;
-           break;
-       }
+        ret -= ts_to_unit(TIMESPEC_TO_MS, &t_wait_dt, &ts_to_ms);
+        timeout -= ts_to_ms;
+        if (timeout < 0){
+            icmp_type = -1;
+            break;
+        }
     }
 finish:
     ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_DEL, snd_fd, NULL);
@@ -253,7 +226,7 @@ int cping_once(
     ai_hint.ai_socktype = SOCK_RAW;
     switch (family){
     case AF_INET:
-        ai_hint.ai_protocol = IPPROTO_ICMP; break;
+        ai_hint.ai_protocol = IPPROTO_ICMP;   break;
     case AF_INET6:
         ai_hint.ai_protocol = IPPROTO_ICMPV6; break;
     default:
@@ -280,7 +253,7 @@ int cping_addr_once(
     struct cping_ctx *cpctx, struct sockaddr *addr, socklen_t addrlen,
     int timeout, struct timespec *delay
 ){
-    struct sonar_res   sres     = {0};
+    struct srv_res sres = {0};
     int ret, snd_fd, family, icmp_type = 0;
 
     family = addr->sa_family;
@@ -316,7 +289,7 @@ struct trnode *cping_tracert(
     struct cping_ctx *cpctx, struct sockaddr *const saddr,
     const socklen_t socklen, const int timeout, const int maxhop
 ){
-    struct sonar_res sres = {0};
+    struct srv_res sres = {0};
     struct trnode   *head = NULL, **cur;
 #define NAME_SZ 256UL
     char fqdn[NAME_SZ] = {0};
@@ -353,14 +326,14 @@ struct trnode *cping_tracert(
         /* NOTE: You can't leave this zero. */
         sres.addrlen = sizeof(struct sockaddr_storage);
         debug_printf("current hop: %d"NL, limit);
-        ret = icmp_srv(
+        icmp_type = icmp_srv(
             cpctx, snd_fd, saddr, socklen, timeout,
             &sres
         );
-        debug_printf("icmp_srv ret type: %d"NL, ret);
+        debug_printf("icmp_srv ret type: %d"NL, icmp_type);
 
         assert(sres.addrlen != 0);
-        if (ret >= 0){
+        if (icmp_type >= 0){
 
             size_t addr_sz;
             switch (sres.addr.ss_family){
@@ -380,7 +353,7 @@ struct trnode *cping_tracert(
         }
         memcpy(&(*cur)->delay, &sres.delay, sizeof(struct timespec));
 
-        if (ret >= 0){
+        if (icmp_type >= 0){
             memset(fqdn, 0, NAME_SZ);
             ret = getnameinfo(
                 (struct sockaddr*)&sres.addr, sres.addrlen,

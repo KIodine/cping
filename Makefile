@@ -15,7 +15,7 @@ CFLAG += -I$(INCDIR)
 # beware of the order of obj files, `ld` handles each obj file with
 # the order these file inputs and will not look back for "unsatisfied"
 # symbols.
-OBJS := cping.o cpaux.o
+OBJS := cping.o cpaux.o tsutil.o
 TEST := main.o
 
 BIN := main
@@ -53,4 +53,6 @@ clean_all: clean
 
 # --- source file statistics ---
 count_lines:
-	@wc -lc $(addprefix $(SRCDIR)/, $(subst .o,.c,$(OBJS)) $(subst .o,.h,$(OBJS)))
+	@wc -lc \
+	$(addprefix $(SRCDIR)/, $(subst .o,.c,$(OBJS))) \
+	$(addprefix $(INCDIR)/, $(subst .o,.h,$(OBJS)))
