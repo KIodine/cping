@@ -27,7 +27,7 @@ BINDST := $(BINDIR)/$(BIN)
 ifdef DEBUG
 	CFLAG += $(CDBGF)
 else
-	CFLAG += -DNDEBUG
+	CFLAG += -DNDEBUG -O1
 endif
 
 # make directories
