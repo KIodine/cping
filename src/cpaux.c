@@ -130,10 +130,11 @@ int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     uint16_t packet_id, packet_seq;
     const unsigned int min_v4_icmp_sz = 20UL + 8UL;
 
-    if (len < min_v4_icmp_sz){
-        fprintf(stderr, "received packet stream short than v4 minimum length of 28: %lu", len);
-        abort();
-    }
+    ASSUME(
+        len >= min_v4_icmp_sz,
+        "received packet stream short than v4 minimum "
+        "length of 28: %lu", len
+    );
 
     bytes  = buf;
     hdrlen = 4*(bytes[0] & 0xF);
@@ -153,13 +154,11 @@ int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     case ICMP_DEST_UNREACH:
     case ICMP_TIME_EXCEEDED:
         /* skip icmp header and IPv4 header */
-        if (len < (20UL*2 + 8UL*2)){
-            fprintf(stderr,
-                "packet shorter than minimum requirement of DST_UNREACH and "
-                "TIME_EXCEED (56): %lu"NL, len
-            );
-            abort();
-        }
+        ASSUME(
+            len >= (20UL*2 + 8UL*2),
+            "packet shorter than minimum requirement of DST_UNREACH "
+            "and TIME_EXCEED (56): %lu"NL, len
+        );
         debug_printf("received DST_UNREACH4 or TIME_EXCEEDED4"NL);
         bytes += 8UL;
         bytes += 4UL*(bytes[0] & 0xF);
@@ -196,10 +195,11 @@ int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
     uint16_t packet_id, packet_seq;
     const unsigned int min_v6_icmp_sz = 8UL;
 
-    if (len < min_v6_icmp_sz){
-        fprintf(stderr, "received packet stream short than v6 minimum length of 8: %lu", len);
-        abort();
-    }
+    ASSUME(
+        len >= min_v6_icmp_sz,
+        "received packet stream short than v6 minimum "
+        "length of 8: %lu", len
+    );
 
     /* no need to skip IPv6 hdr cause we won't receive it */
     bytes = buf;
@@ -215,13 +215,11 @@ int verify_v6_packet(void *buf, size_t len, uint16_t id, uint16_t seq){
         debug_printf("received ECHO_REPLY6"NL); break;
     case ICMP6_DST_UNREACH:
     case ICMP6_TIME_EXCEEDED:
-        if (len < (min_v6_icmp_sz + 48UL)){
-            fprintf(stderr,
-                "received packet stream short than v6 minimum length of "
-                "error msg = 56 : %lu"NL, len
-            );
-            abort();
-        }
+        ASSUME(
+            len >= (min_v6_icmp_sz + 48UL),
+            "received packet stream short than v6 minimum length of "
+            "error msg = 56 : %lu"NL, len
+        );
         debug_printf("received DST_UNREACH6 or TIME_EXCEEDED6");
         bytes += 8UL;
         bytes += 40UL;

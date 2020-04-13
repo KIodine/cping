@@ -1,159 +1,8 @@
 #include "cping.h"
 #include "cpaux.h"
 #include "tsutil.h"
+#include "addrutil.h"
 
-/* Store return data of `icmp_srv`. */
-struct srv_res {
-    struct sockaddr_storage addr;
-    socklen_t               addrlen;
-    struct timespec         delay;
-};
-
-/* --- static function declarations ------------------------- */
-
-/* Send, recv and verify the packet, this function assumes
-   the waiting epoll fd have exactly one socket fd registered. */
-static int icmp_srv(
-    struct cping_ctx *cpctx, int snd_fd, struct sockaddr *addr,
-    socklen_t addrlen, int timeout, struct srv_res *sres
-);
-
-static int icmp_srv(
-    struct cping_ctx *cpctx, int snd_fd, struct sockaddr *addr,
-    socklen_t addrlen, int timeout, struct srv_res *sres
-){
-    struct sockaddr_storage *saddr_store;
-    struct epoll_event       ev = {0};
-    struct timespec t_wait_start, t_wait_dt,
-                    t_snd, t_rcv;
-    struct timespec *delay;
-    socklen_t       *sastlen;
-    uint16_t snd_id, snd_seq;
-    long ts_to_ms;
-    int  rcv_fd, nrcv, ret, icmp_type = 0;
-
-    /* Aliasing sres data. */
-    saddr_store = &sres->addr;
-    sastlen     = &sres->addrlen;
-    delay       = &sres->delay;
-
-    snd_id  = random() & 0xFFFF;
-    snd_seq = 0;
-
-    debug_printf("setup id = %d, seq = %d"NL, snd_id, snd_seq);
-
-    setup_icmp_er(
-        addr->sa_family, cpctx->icmp_pack, cpctx->paclen,
-        snd_id, snd_seq
-    );
-
-    ev.events  = EPOLLIN|EPOLLET;
-    ev.data.fd = snd_fd;
-    ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_ADD, snd_fd, &ev);
-    if (ret != 0){
-        perror("register fd into epoll");
-        return -1;
-    }
-
-    ret = sendto(
-        snd_fd, cpctx->icmp_pack, cpctx->paclen, 0, addr, addrlen
-    );
-    
-    if (ret == -1){
-        perror("send ICMP packet");
-        icmp_type = -1;
-        goto finish;
-    }
-    clock_gettime(CLOCK_MONOTONIC, &t_snd);
-
-    for (;;){
-        clock_gettime(CLOCK_MONOTONIC, &t_wait_start);
-        ret = epoll_wait(cpctx->epfd, &ev, 1, timeout);
-        clock_gettime(CLOCK_MONOTONIC, &t_wait_dt);
-        if (ret < 0){
-            perror("waiting for fd ready");
-            goto finish;
-        }
-        if (ret == 0){
-            /* No fd is ready, indicating timeout. */
-            icmp_type = -1;
-            clock_gettime(CLOCK_MONOTONIC, &t_rcv);
-            goto finish;
-        }
-        rcv_fd = ev.data.fd;
-
-        if (rcv_fd != snd_fd){
-            fprintf(stderr, "assumption violated"NL);
-            abort();
-        }
-
-        for (;;){
-            nrcv = recvfrom(
-                rcv_fd, cpctx->rcv_buf, cpctx->buflen, 0,
-                (struct sockaddr*)saddr_store, sastlen
-            );
-            clock_gettime(CLOCK_MONOTONIC, &t_rcv);
-            if (nrcv == -1){
-                if (errno == EAGAIN){
-                    /* Nothing to receive, `epoll_wait` again. */
-                    break;
-                } else {
-                    perror("receiving packet");
-                    icmp_type = -1;
-                    goto finish;
-                }
-            } else {
-                debug_printf("recv = %d"NL, nrcv);
-            }
-            
-            if (saddr_store->ss_family != addr->sa_family){
-                continue;
-            }
-
-            switch(saddr_store->ss_family){
-            case AF_INET:
-                icmp_type = verify_v4_packet(
-                    cpctx->rcv_buf, nrcv, snd_id, snd_seq
-                ); break;
-            case AF_INET6:
-                icmp_type = verify_v6_packet(
-                    cpctx->rcv_buf, nrcv, snd_id, snd_seq
-                ); break;
-            default:
-                fprintf(stderr, "unexpected file descriptor");
-                abort();
-            }
-            if (icmp_type >= 0){
-                goto finish;
-            }
-        }
-
-        ts_sub(&t_wait_dt, &t_wait_dt, &t_wait_start);
-        /*
-            assume that `t_wait_dt` is always greater equal than `t_wait_start`
-            and not too big from `t_wait_start`
-        */
-        ret -= ts_to_unit(TIMESPEC_TO_MS, &t_wait_dt, &ts_to_ms);
-        timeout -= ts_to_ms;
-        if (timeout < 0){
-            icmp_type = -1;
-            break;
-        }
-    }
-finish:
-    ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_DEL, snd_fd, NULL);
-    if (ret != 0){
-        perror("remove fd from epoll fd");
-        return -1;
-    }
-
-    delay->tv_sec  = t_rcv.tv_sec  - t_snd.tv_sec;
-    delay->tv_nsec = t_rcv.tv_nsec - t_snd.tv_nsec;
-
-    return icmp_type;
-}
-
-/* ---------------------------------------------------------- */
 
 int cping_init(struct cping_ctx *cpctx){
     int tmpfd = -1;
@@ -230,8 +79,7 @@ int cping_once(
     case AF_INET6:
         ai_hint.ai_protocol = IPPROTO_ICMPV6; break;
     default:
-        fprintf(stderr, "unexpected family %d"NL, family);
-        abort();
+        ASSUME(0, "unexpected family %d"NL, family);
     }
 
     ret = getaddrinfo(host, NULL, &ai_hint, &gai_res);
@@ -254,20 +102,8 @@ int cping_addr_once(
     int timeout, struct timespec *delay
 ){
     struct srv_res sres = {0};
-    int snd_fd, family, icmp_type = 0;
+    int ret, icmp_type = 0;
 
-    family = addr->sa_family;
-
-    switch(family){
-    case AF_INET:
-        snd_fd = cpctx->v4fd; break;
-    case AF_INET6:
-        snd_fd = cpctx->v6fd; break;
-    default:
-        fprintf(stderr, "unexpected family %d"NL, family);
-        abort();
-    }
-    
     if (timeout < 0){
         fprintf(stderr, "timeout less than zero is not allowed"NL);
         return -1;
@@ -275,9 +111,10 @@ int cping_addr_once(
 
     /* `addrlen` indicates the length of buffer. */
     sres.addrlen = sizeof(struct sockaddr_storage);
-    icmp_type = icmp_srv(
-        cpctx, snd_fd, (struct sockaddr*)addr, addrlen, timeout, &sres
+    ret = icmp_srv(
+        cpctx, (struct sockaddr*)addr, addrlen, &sres, timeout
     );
+    icmp_type = sres.icmp_type;
 
     delay->tv_sec  = sres.delay.tv_sec;
     delay->tv_nsec = sres.delay.tv_nsec;
@@ -286,8 +123,8 @@ int cping_addr_once(
 }
 
 struct trnode *cping_tracert(
-    struct cping_ctx *cpctx, struct sockaddr *const saddr,
-    const socklen_t socklen, const int timeout, const int maxhop
+    struct cping_ctx *cpctx, struct sockaddr *const addr,
+    const socklen_t addrlen, const int timeout, const int maxhop
 ){
     struct srv_res sres = {0};
     struct trnode   *head = NULL, **cur;
@@ -298,7 +135,7 @@ struct trnode *cping_tracert(
     
     cur = &head;
 
-    switch(saddr->sa_family){
+    switch(addr->sa_family){
     case AF_INET:
         lvl    = IPPROTO_IP;
         opt    = IP_TTL;
@@ -308,8 +145,7 @@ struct trnode *cping_tracert(
         opt    = IPV6_UNICAST_HOPS;
         snd_fd = cpctx->v6fd; break;
     default:
-        fprintf(stderr, "unexpected family %d"NL, saddr->sa_family);
-        abort();
+        ASSUME(0, "unexpected family %d"NL, addr->sa_family);
     }
 
     for (int i = 1; i < maxhop; ++i){
@@ -326,17 +162,17 @@ struct trnode *cping_tracert(
         /* NOTE: You can't leave this zero. */
         sres.addrlen = sizeof(struct sockaddr_storage);
         debug_printf("current hop: %d"NL, limit);
-        icmp_type = icmp_srv(
-            cpctx, snd_fd, saddr, socklen, timeout,
-            &sres
+        ret = icmp_srv(
+            cpctx, addr, addrlen, &sres, timeout
         );
+        icmp_type = sres.icmp_type;
         debug_printf("icmp_srv ret type: %d"NL, icmp_type);
 
         assert(sres.addrlen != 0);
         if (icmp_type >= 0){
 
             size_t addr_sz;
-            switch (sres.addr.ss_family){
+            switch (sres.addr_stor.ss_family){
             case AF_INET:
                 addr_sz = sizeof(struct sockaddr_in);  break;
             case AF_INET6:
@@ -344,7 +180,7 @@ struct trnode *cping_tracert(
             }
             (*cur)->addr    = calloc(1, addr_sz);
             (*cur)->addrlen = sres.addrlen;
-            memcpy((*cur)->addr,  &sres.addr,  addr_sz);
+            memcpy((*cur)->addr,  &sres.addr_stor,  addr_sz);
             
             debug_printf("addr copied"NL);
         } else {
@@ -356,7 +192,7 @@ struct trnode *cping_tracert(
         if (icmp_type >= 0){
             memset(fqdn, 0, NAME_SZ);
             ret = getnameinfo(
-                (struct sockaddr*)&sres.addr, sres.addrlen,
+                (struct sockaddr*)&sres.addr_stor, sres.addrlen,
                 fqdn, NAME_SZ, NULL, 0, 0
             );
             if (ret != 0){
@@ -374,7 +210,7 @@ struct trnode *cping_tracert(
 
         debug_printf(" --- --- --- "NL);
 
-        ret = memcmp(saddr, &sres.addr, socklen);
+        ret = addr_cmp(addr, (struct sockaddr*)&sres.addr_stor);
         if (ret == 0){
             debug_printf("compare equal, break now"NL);
             break;

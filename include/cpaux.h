@@ -24,6 +24,8 @@
 #include <arpa/inet.h>
 #include <linux/filter.h>
 
+#include "dbg_common.h"
+#include "cping.h"
 
 /*
     auxiliary routines for library `cping`, including macros and
@@ -35,20 +37,18 @@
     prior than other compilation units
 */
 
-
-#define NL "\n"
-#define PREFIX "[cping]"
-
-#ifndef NDEBUG
-    #define debug_printf(fmt, ...) printf(PREFIX fmt, ##__VA_ARGS__)
-#else
-    #define debug_printf(ignore, ...) ((void)0)
-#endif
-
 /* ICMP header size for both ICMP(v4) and ICMPv6. */
 #define ICMP_HDR_SZ 8UL
-/* Canonical value of ethernet v2. */
+/* Typical value of ethernet v2. */
 #define ETH_MTU     1500UL
+
+
+struct srv_res {
+    struct sockaddr_storage addr_stor;
+    struct timespec delay;
+    socklen_t       addrlen;
+    int icmp_type;
+};
 
 
 /* create and setup IPv4 raw socket */
@@ -59,6 +59,13 @@ int create_v6raw(void);
 ssize_t init_icmp_pack(void *buf, size_t len);
 uint16_t inet_checksum16(char *buf, unsigned int len);
 int setup_icmp_er(int family, void *buf, size_t len, uint16_t id, uint16_t seq);
+
+/* Send, recv and verify the packet, this function assumes
+   the waiting epoll fd have exactly one socket fd registered. */
+int icmp_srv(
+    struct cping_ctx *cpctx, struct sockaddr *addr, socklen_t addrlen,
+    struct srv_res *sres, int timeout
+);
 
 /* Verify the package is for us or not. */
 int verify_v4_packet(void *buf, size_t len, uint16_t id, uint16_t seq);
