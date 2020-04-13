@@ -14,7 +14,8 @@
             "includePath": [
                 "${project_include_path}"
             ],
-            "compilerPath": "${project_compiler}"
+            "compilerPath": "${project_compiler}",
+            "cStandard": "c99"
         }
     ],
     "version": 4
