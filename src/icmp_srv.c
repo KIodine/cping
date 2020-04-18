@@ -30,6 +30,12 @@ int icmp_srv(
         snd_id, snd_seq
     );
 
+    /* TODO:
+        Eliminate the need of adding & removing fds each time `icmp_srv`
+        being called.
+        If doing so, moving add and remove routine to initializer and
+        finalizer.
+     */
     ev.events = EPOLLIN|EPOLLET;
     ev.data.fd = snd_fd;
     ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_ADD, snd_fd, &ev);
@@ -63,6 +69,11 @@ int icmp_srv(
         }
         
         rcv_fd = ev.data.fd;
+        /* if (rcv_fd != snd_fd) <ignore|clean buffer, wait next> */
+        /*
+            In that way, we might receive messages from previous
+            call. Do we clean it right away or lazily handle it?
+        */
         ASSUME(rcv_fd == snd_fd, "assumption violated"NL);
 
         for (;;){
@@ -100,6 +111,8 @@ int icmp_srv(
             if (sres->icmp_type >= 0){
                 goto finish;
             }
+            /* Packet does not have matching `snd_id` and `snd_seq`. */
+            debug_printf("might received packets from previous call"NL);
         }
 
         ts_sub(&t_wait_dt, &t_wait_dt, &t_wait_st);

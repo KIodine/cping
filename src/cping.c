@@ -105,7 +105,7 @@ int cping_addr_once(
     int ret, icmp_type = 0;
 
     if (timeout < 0){
-        fprintf(stderr, "timeout less than zero is not allowed"NL);
+        error_printf("timeout less than zero is not allowed"NL);
         return -1;
     }
 
@@ -177,6 +177,14 @@ struct trnode *cping_tracert(
                 addr_sz = sizeof(struct sockaddr_in);  break;
             case AF_INET6:
                 addr_sz = sizeof(struct sockaddr_in6); break;
+            default:
+                /* 
+                    Eliminate the possibility of letting uninitialize
+                    `addr_sz` pass through.
+                 */
+                ASSUME(
+                    0, "Unrecongized family: %d"NL, sres.addr_stor.ss_family
+                );
             }
             (*cur)->addr    = calloc(1, addr_sz);
             (*cur)->addrlen = sres.addrlen;
