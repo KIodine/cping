@@ -7,6 +7,7 @@ VFLAG := --leak-check=full --show-leak-kinds=all --verbose
 
 INCDIR := ./include
 SRCDIR := ./src
+TSTDIR := ./test
 LIBDIR := ./lib
 OBJDIR := ./obj
 BINDIR := ./bin
@@ -15,14 +16,17 @@ CFLAG += -I$(INCDIR)
 # beware of the order of obj files, `ld` handles each obj file with
 # the order these file inputs and will not look back for "unsatisfied"
 # symbols.
-OBJS := cping.o cpaux.o icmp_srv.o tsutil.o addrutil.o
+OBJS := \
+	cping.o cpaux.o icmp_srv.o \
+	tsutil.o addrutil.o
 TEST := main.o
 
 BIN := main
 LIB := libcping
 
-OBJDST := $(addprefix $(OBJDIR)/, $(OBJS) $(TEST))
+OBJDST := $(addprefix $(OBJDIR)/, $(OBJS))
 BINDST := $(BINDIR)/$(BIN)
+TSTDST := $(OBJDIR)/$(TEST)
 
 ifdef DEBUG
 	CFLAG += $(CDBGF)
@@ -40,11 +44,15 @@ create_bindir:
 create_libdir:
 	@mkdir -p $(LIBDIR)
 
-build_test: $(OBJDST) create_bindir
-	$(CC) $(CFLAG) $(OBJDST) -o $(BINDST)
+build_test: $(OBJDST) create_bindir static testmain
+	$(CC) $(CFLAG) -L./$(LIBDIR) -lcping -o $(BINDST) \
+	$(OBJDST) $(TSTDST)
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c create_objdir
 	$(CC) $(CFLAG) -c $< -o $@
+
+testmain:
+	$(CC) $(CFLAG) -c $(TSTDIR)/main.c -o $(TSTDST)
 
 check: build_test
 	sudo $(VG) $(VFLAG) $(BINDST)
@@ -58,7 +66,7 @@ shared: $(OBJDST) create_libdir
 	$(CC) -shared $(CFLAG) $(OBJDST) -o $(LIBDIR)/$(LIB).so
 
 clean:
-	rm -f $(OBJDST)
+	rm -f $(OBJDST) $(TSTDST)
 
 clean_all: clean
 	rm -f $(BINDST)
@@ -66,6 +74,4 @@ clean_all: clean
 
 # --- source file statistics ---
 count_lines:
-	@wc -lc \
-	$(addprefix $(SRCDIR)/, $(subst .o,.c,$(OBJS))) \
-	$(addprefix $(INCDIR)/, $(subst .o,.h,$(OBJS)))
+	@find include/* src/* test/* | xargs wc -lc

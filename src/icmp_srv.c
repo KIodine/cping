@@ -11,7 +11,7 @@ int icmp_srv(
     struct timespec t_wait_st, t_wait_dt, t_snd;
     uint16_t snd_id, snd_seq;
     long dt_ms;
-    int snd_fd, rcv_fd, nrcv, tmp, ret = 0;
+    int snd_fd, rcv_fd, nrcv, ret = 0;
 
     snd_id  = random() & 0xFFFF;
     snd_seq = 0;
@@ -30,13 +30,12 @@ int icmp_srv(
         snd_id, snd_seq
     );
 
-    ev.events = EPOLLIN|EPOLLET;
-    ev.data.fd = snd_fd;
-    ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_ADD, snd_fd, &ev);
-    if (ret != 0){
-        perror("register fd into epoll");
-        return -1;
-    }
+    /* TODO:
+        Eliminate the need of adding & removing fds each time `icmp_srv`
+        being called.
+        If doing so, moving add and remove routine to initializer and
+        finalizer.
+     */
 
     ret = sendto(
         snd_fd, cpctx->icmp_pack, cpctx->paclen, 0, addr, addrlen
@@ -63,13 +62,25 @@ int icmp_srv(
         }
         
         rcv_fd = ev.data.fd;
-        ASSUME(rcv_fd == snd_fd, "assumption violated"NL);
+        /* if (rcv_fd != snd_fd) <ignore|clean buffer, wait next> */
+        /*
+            In that way, we might receive messages from previous
+            call. Do we clean it right away or lazily handle it?
+            -> Clean it right away, since we use edge-trigger mode.
+               If we don't read, we'll lost the fd permanently.
+        */
 
         for (;;){
             nrcv = recvfrom(
                 rcv_fd, cpctx->rcv_buf, cpctx->buflen, 0,
                 (struct sockaddr*)&sres->addr_stor, &sres->addrlen
             );
+            if (rcv_fd != snd_fd){
+                /* Read it anyway because we use edge-trigger mode. */
+                debug_printf("received packet from not interested fd"NL);
+                break;
+            }
+
             clock_gettime(CLOCK_MONOTONIC, &sres->delay);
 
             if (nrcv == -1){
@@ -100,6 +111,8 @@ int icmp_srv(
             if (sres->icmp_type >= 0){
                 goto finish;
             }
+            /* Packet does not have matching `snd_id` and `snd_seq`. */
+            debug_printf("might received packets from previous call"NL);
         }
 
         ts_sub(&t_wait_dt, &t_wait_dt, &t_wait_st);
@@ -107,19 +120,13 @@ int icmp_srv(
             Assuming `t_wait_dt` is gt/ge than `t_wait_st` and
             not to big from `t_wait_st`.
         */
-       ts_to_unit(TIMESPEC_TO_MS, &t_wait_dt, &dt_ms);
-       timeout -= dt_ms;
-       if (timeout <= 0){
-           ret = -1; goto finish;
-       }
+        ts_to_unit(TIMESPEC_TO_MS, &t_wait_dt, &dt_ms);
+        timeout -= dt_ms;
+        if (timeout <= 0){
+            ret = -1; goto finish;
+        }
     }
 finish:
-    /* Use `tmp` so it won't clobber `ret`. */
-    tmp = epoll_ctl(cpctx->epfd, EPOLL_CTL_DEL, snd_fd, NULL);
-    if (tmp != 0){
-        perror("remove fd from epoll fd");
-        return -1;
-    }
 
     ts_sub(&sres->delay, &sres->delay, &t_snd);
 

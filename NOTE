@@ -72,3 +72,36 @@
           }
           ```
           the similar process can be exert on IPv4 sockets.
+- More "clean" `icmp_srv`:
+    - What's necessary for such precedure?
+        - packet to send.
+        - proper id and seq for verification.
+            - verification only cares about the id and seq.
+        - traget address.
+        - buffer for address storing and packet receiving.
+    - What we care about is:
+        - is it what we're waiting for?
+        - icmp type (and code?).
+        - delay
+    - automatically handling sending fd selection.
+    - proposed interface:
+        ```
+        int icmp_srv(
+            struct cping_ctx *cpctx, struct sockaddr *addr, socklen_t addrlen
+            struct srv_res *sres, int timeout
+        );
+        /*
+            0 : successfully received packet.
+            -1: no packet is received.
+        */
+
+        struct srv_res {
+            struct sockaddr_storage addr_stor;
+            /* or use `struct sockaddr_in6` to save space? */
+            struct timespec delay;
+            socklen_t addrlen;
+            uint8_t type;
+            uint8_t code;
+        };
+        ```
+    - ...

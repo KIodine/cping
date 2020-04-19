@@ -5,7 +5,8 @@
 
 
 int cping_init(struct cping_ctx *cpctx){
-    int tmpfd = -1;
+    int tmpfd = -1, ret = 0;
+    struct epoll_event tmpev = {0};
 
     /* try create IPv4 raw socket */
     tmpfd = create_v4raw();
@@ -29,6 +30,22 @@ int cping_init(struct cping_ctx *cpctx){
     }
     cpctx->epfd = tmpfd;
 
+    /* register fds into epoll. */
+    tmpev.events = EPOLLIN|EPOLLET;
+
+    tmpev.data.fd = cpctx->v4fd;
+    ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_ADD, cpctx->v4fd, &tmpev);
+    if (ret != 0){
+        perror("can't register v4fd");
+        goto epoll_reg;
+    }
+    tmpev.data.fd = cpctx->v6fd;
+    ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_ADD, cpctx->v6fd, &tmpev);
+    if (ret != 0){
+        perror("can't register v6fd");
+        goto epoll_reg;
+    }
+
     /* `malloc` on linux always returns "valid" pointer */
     cpctx->paclen = ICMP_HDR_SZ + 32UL; /* icmp header + payload */
     cpctx->icmp_pack = malloc(cpctx->paclen);
@@ -41,6 +58,8 @@ int cping_init(struct cping_ctx *cpctx){
 
     return 0;
     /* error handling area */
+epoll_reg:
+    close(cpctx->epfd);
 epfd_error:
     close(cpctx->v6fd);
 v6sock_error:
@@ -105,7 +124,7 @@ int cping_addr_once(
     int ret, icmp_type = 0;
 
     if (timeout < 0){
-        fprintf(stderr, "timeout less than zero is not allowed"NL);
+        error_printf("timeout less than zero is not allowed"NL);
         return -1;
     }
 
@@ -177,6 +196,14 @@ struct trnode *cping_tracert(
                 addr_sz = sizeof(struct sockaddr_in);  break;
             case AF_INET6:
                 addr_sz = sizeof(struct sockaddr_in6); break;
+            default:
+                /* 
+                    Eliminate the possibility of letting uninitialize
+                    `addr_sz` pass through.
+                 */
+                ASSUME(
+                    0, "Unrecongized family: %d"NL, sres.addr_stor.ss_family
+                );
             }
             (*cur)->addr    = calloc(1, addr_sz);
             (*cur)->addrlen = sres.addrlen;
