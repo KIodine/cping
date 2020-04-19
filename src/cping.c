@@ -5,7 +5,8 @@
 
 
 int cping_init(struct cping_ctx *cpctx){
-    int tmpfd = -1;
+    int tmpfd = -1, ret = 0;
+    struct epoll_event tmpev = {0};
 
     /* try create IPv4 raw socket */
     tmpfd = create_v4raw();
@@ -29,6 +30,22 @@ int cping_init(struct cping_ctx *cpctx){
     }
     cpctx->epfd = tmpfd;
 
+    /* register fds into epoll. */
+    tmpev.events = EPOLLIN|EPOLLET;
+
+    tmpev.data.fd = cpctx->v4fd;
+    ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_ADD, cpctx->v4fd, &tmpev);
+    if (ret != 0){
+        perror("can't register v4fd");
+        goto epoll_reg;
+    }
+    tmpev.data.fd = cpctx->v6fd;
+    ret = epoll_ctl(cpctx->epfd, EPOLL_CTL_ADD, cpctx->v6fd, &tmpev);
+    if (ret != 0){
+        perror("can't register v6fd");
+        goto epoll_reg;
+    }
+
     /* `malloc` on linux always returns "valid" pointer */
     cpctx->paclen = ICMP_HDR_SZ + 32UL; /* icmp header + payload */
     cpctx->icmp_pack = malloc(cpctx->paclen);
@@ -41,6 +58,8 @@ int cping_init(struct cping_ctx *cpctx){
 
     return 0;
     /* error handling area */
+epoll_reg:
+    close(cpctx->epfd);
 epfd_error:
     close(cpctx->v6fd);
 v6sock_error:
