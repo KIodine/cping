@@ -115,9 +115,6 @@ int traceroute_test(void){
         
         addr4 = (struct sockaddr_in*)tmp->addr;
         if (addr4 != NULL){
-            printf(
-                "[test]family = %d"NL, tmp->addr->sa_family
-            );
             inet_ntop(
                 AF_INET, &addr4->sin_addr,
                 present, 256
