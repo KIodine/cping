@@ -40,6 +40,11 @@ int  cping_init(struct cping_ctx *cpctx);
 /* Finalize `struct cping_ctx`. */
 void cping_fini(struct cping_ctx *cpctx);
 
+/* Shorthand for allocate memory and initialize. */
+struct cping_ctx *cping_alloc(void);
+/* Shorthand for finalize and deallocate memory. */
+void cping_free(struct cping_ctx *cpctx);
+
 /*
     Send ICMP echo request to host. If return value is greater/equal than
     0, it is the ICMP type we received, otherwise (< 0) indicates error.
