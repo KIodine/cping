@@ -81,6 +81,24 @@ void cping_fini(struct cping_ctx *cpctx){
     return;
 }
 
+struct cping_ctx *cping_alloc(void){
+    struct cping_ctx *cpctx = NULL;
+    int ret = 0;
+    
+    cpctx = calloc(1, sizeof(struct cping_ctx));
+    
+    ret = cping_init(cpctx);
+    if (ret != 0){
+        return NULL;
+    }
+    return cpctx;
+}
+
+void cping_free(struct cping_ctx *cpctx){
+    cping_fini(cpctx);
+    return;
+}
+
 int cping_once(
         struct cping_ctx *cpctx, const char *host, int family,
         const int timeout, struct timespec *delay

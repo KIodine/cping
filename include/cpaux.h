@@ -28,7 +28,7 @@
 #include "cping.h"
 
 /*
-    auxiliary routines for library `cping`, including macros and
+    auciliary routines for library `cping`, including macros and
     helper functions.
     putting the includes here would avoid symbols from polluting
     autocompletion, also make the library header much cleaner.

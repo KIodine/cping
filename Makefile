@@ -17,7 +17,7 @@ CFLAG += -I$(INCDIR)
 # the order these file inputs and will not look back for "unsatisfied"
 # symbols.
 OBJS := \
-	cping.o cpaux.o icmp_srv.o \
+	cping.o cpaux.o cp_sock.o icmp_srv.o \
 	tsutil.o addrutil.o
 TEST := main.o
 
